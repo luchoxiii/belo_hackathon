@@ -64,6 +64,8 @@ def vault_with_goal(balance: str, goal: str) -> dict[str, Any]:
 
 
 def _raw(now: datetime, **data: Any) -> RawData:
+    # Cotización sintética para todos los perfiles: las fuentes dummy suman movimientos en ARS
+    data.setdefault("fx_rates", _fx_table(now))
     return RawData(fetched_at=now, window_from=now - timedelta(days=WINDOW_DAYS), window_to=now,
                    unavailable={"demo": "synthetic_profile"}, **data)
 
@@ -228,6 +230,14 @@ PROFILE_NAMES = {
     "short_history": "Usuario demo · Cuenta nueva",
     "family": "Usuario demo · Familia",
 }
+
+
+def demo_profile(profile: str, now: datetime | None = None):
+    """Perfil demo con las fuentes dummy conectadas (las elegidas por el usuario o el default del perfil)."""
+    from sources.registry import connected_source_ids, profile_from_raw
+
+    subject_id = f"demo-{profile}"
+    return profile_from_raw(demo_raw(profile, now), subject_id, connected_source_ids(subject_id, profile))
 
 
 def demo_raw(profile: str, now: datetime | None = None) -> RawData:

@@ -188,7 +188,8 @@ def test_source_never_calls_write_methods():
     """Ningún archivo del cliente, del scoring ni del MCP llama post/put/patch/delete/request."""
     forbidden = {"post", "put", "patch", "delete", "request", "send", "stream"}
     files = [SRC / "belo_client.py", SRC / "mcp_server.py",
-             *(SRC / "belo_scoring").glob("*.py"), *(SRC / "scoring_engine").glob("*.py")]
+             *(SRC / "belo_scoring").glob("*.py"), *(SRC / "scoring_engine").glob("*.py"),
+             *(SRC / "sources").rglob("*.py"), *(SRC / "dashboard").glob("*.py")]
     for path in files:
         for node in ast.walk(ast.parse(path.read_text())):
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):

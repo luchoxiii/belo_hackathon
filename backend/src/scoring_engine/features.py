@@ -28,11 +28,19 @@ def _cv(values: list[Decimal]) -> Decimal | None:
     return (variance.sqrt() / mean).quantize(RATIO)
 
 
+def monotributo_status(facts: dict[str, dict]) -> str:
+    mono = facts.get("monotributo") or {}
+    if not mono.get("registered"):
+        return "not_registered"
+    return "up_to_date" if mono.get("up_to_date") else "in_debt"
+
+
 def extract_features(
     monthly: MonthlyAggregates,
     savings: SavingsSnapshot,
     declared: DeclaredProfile,
     as_of: datetime,
+    facts: dict[str, dict] | None = None,
 ) -> CreditFeatures:
     # Solo meses completos (el mes en curso bajaría la mediana y subiría el CV),
     # desde el primer mes con movimientos (antes la cuenta no existía o no se usaba)
@@ -52,6 +60,10 @@ def extract_features(
     expense_avg = sum((m.expenses.total_usd for m in months), ZERO) / len(months) if months else ZERO
     stock = [v for v in (savings.total_liquid_usd, savings.total_vaults_usd) if v is not None]
     runway = (sum(stock, ZERO) / expense_avg).quantize(Decimal("0.01")) if stock and expense_avg else None
+
+    providers = {p for m in months for p in m.income.providers}
+    platform_income = sum((m.income.platform_usd for m in months), ZERO)
+    bill_months = sum(1 for m in months if m.expenses.bill_payments > 0)
 
     swaps = sum((m.stablecoin_swap_usd for m in months), ZERO)
     payer_shares = [m.income.top_payer_share for m in months if m.income.top_payer_share is not None]
@@ -73,4 +85,8 @@ def extract_features(
         pep=declared.compliance_flags.get("pep"),
         top_payer_share=max(payer_shares) if payer_shares else None,
         dollarization_ratio=_ratio(swaps, income_total),
+        income_source_count=len(providers),
+        bill_payment_regularity=_ratio(Decimal(bill_months), Decimal(len(months))),
+        monotributo_status=monotributo_status(facts or {}),
+        platform_income_share=_ratio(platform_income, income_total),
     )

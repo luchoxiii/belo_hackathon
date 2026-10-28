@@ -16,10 +16,13 @@ ADJUSTMENT_FEATURE = {
     "card_coherence_false": "card_coherence",
     "partial_data": "partial_pct",
     "has_savings_goal": "has_savings_goal",
+    "monotributo": "monotributo_status",
+    "monotributo_up_to_date": "monotributo_status",
+    "monotributo_in_debt": "monotributo_status",
 }
 
 PIPELINE = [
-    ("collect", "belo_scoring.fetch_raw", "Lee la cuenta en belo (solo GET): movimientos, tarjetas, saldos, vaults y cotización ARS/USD."),
+    ("collect", "sources.registry.load_profile", "Lee cada fuente conectada con su repository (belo en vivo, solo GET; el resto dummy) y las combina en el modelo canónico."),
     ("categorize", "belo_scoring.categorize", "Clasifica cada movimiento con reglas fijas en orden: estado, swap, cuenta propia, depósito, egreso, tarjeta."),
     ("aggregate", "belo_scoring.aggregate_monthly", "Suma por mes en USD: ingresos, egresos, recurrencia, neto, dolarización."),
     ("features", "scoring_engine.extract_features", "Calcula ratios sobre los meses completos (sin el mes en curso)."),
@@ -53,6 +56,8 @@ def _adjustment_condition(name: str) -> str:
         "has_savings_goal": "has_savings_goal == true",
         "card_coherence_false": 'card_coherence == "false"',
         "partial_data": f"{config.PARTIAL_PENALTY_FROM} < partial_pct <= {config.MAX_PARTIAL_PCT}",
+        "monotributo_up_to_date": 'monotributo_status == "up_to_date"',
+        "monotributo_in_debt": 'monotributo_status == "in_debt"',
     }[name]
 
 
@@ -124,6 +129,8 @@ def explain_decision(decision: CreditDecision, demo: bool = False) -> dict[str, 
     no_offer = decision.no_offer_reason
     return {
         "demo": demo,
+        "sources": decision.sources,
+        "uses_dummy_data": any(not s["live"] for s in decision.sources),
         "scorecard_version": decision.scorecard_version,
         "decided_at": decision.decided_at.isoformat(),
         "eligible": decision.eligible,

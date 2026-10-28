@@ -36,7 +36,8 @@ def test_same_shape_as_mock(family):
         assert {"id", "type", "name", "currency", "balance"} <= account.keys()
         assert account["balance"].keys() == {"currency", "available", "updatedAt"}
     for t in family["transactions"]:
-        assert REQUIRED_TX_KEYS <= t.keys() <= MOCK_TX_KEYS
+        # `source` es el único campo agregado respecto del mock (fuente de datos)
+        assert REQUIRED_TX_KEYS <= t.keys() <= MOCK_TX_KEYS | {"source"}
         assert t["type"] in {"debit", "credit"}
         assert t["method"] in MOCK_METHODS
         # Números JSON como en el mock, no strings

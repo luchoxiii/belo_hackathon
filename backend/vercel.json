@@ -20,6 +20,14 @@
     {
       "source": "/api/docs",
       "destination": "/api/index"
+    },
+    {
+      "source": "/api/sources",
+      "destination": "/api/index"
+    },
+    {
+      "source": "/api/sources/:path*",
+      "destination": "/api/index"
     }
   ]
 }

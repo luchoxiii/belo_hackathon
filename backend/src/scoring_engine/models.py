@@ -21,6 +21,11 @@ class CreditFeatures(BaseModel):
     card_coherence: str
     partial_pct: Decimal
     pep: bool | None
+    # v2: multi-source
+    income_source_count: int = 0
+    bill_payment_regularity: Decimal | None = None
+    monotributo_status: str = "not_registered"
+    platform_income_share: Decimal | None = None   # informativo, sin peso
     # Informativos, sin peso en v1
     top_payer_share: Decimal | None
     dollarization_ratio: Decimal | None
@@ -88,3 +93,4 @@ class CreditDecision(BaseModel):
     offer: LoanOffer | None = None
     no_offer_reason: str | None = None
     features: CreditFeatures
+    sources: list[dict] = Field(default_factory=list)  # [{id, name, live}] usadas en la decisión

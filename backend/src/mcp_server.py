@@ -11,13 +11,20 @@ from fastmcp.exceptions import ToolError
 from fastmcp.server.dependencies import get_http_headers
 
 from belo_client import BeloAPIError, BeloAuthError
-from belo_scoring.models import RawData
+from sources.models import ProfileData
+from sources.registry import (
+    LiveSourceError,
+    UnknownSourceError,
+    catalog,
+    connected_source_ids,
+    set_connected,
+)
 from dashboard import build_transactions_payload
 from dashboard.openapi import openapi_spec, swagger_html
 from scoring_engine import OfferError, decide, subject_id_for
 from scoring_engine.explain import explain_decision, methodology
-from scoring_engine.demo import PROFILE_NAMES, demo_raw
-from scoring_engine.service import demo_decision, get_decision, get_raw, public_offer, public_profile, public_simulation
+from scoring_engine.demo import PROFILE_NAMES, demo_profile
+from scoring_engine.service import demo_decision, get_decision, get_profile, public_offer, public_profile, public_simulation
 
 mcp = FastMCP("SavingsWalletMVP")
 
@@ -272,20 +279,27 @@ class _RequestError(Exception):
         self.response = JSONResponse({"error": {"code": code, "message": message}}, status_code=status)
 
 
-async def _raw_for_request(request: Request) -> tuple[RawData, str, str | None]:
-    """(raw, subject_id, perfil demo). Con BELO_DEMO_PROFILE usa el perfil demo; si no, el header."""
-    demo_profile = os.getenv("BELO_DEMO_PROFILE")
-    if demo_profile:
-        try:
-            return demo_raw(demo_profile), f"demo-{demo_profile}", demo_profile
-        except ValueError as e:
-            raise _RequestError(500, "unknown_demo_profile", str(e))
-
+def _identity_for_request(request: Request) -> tuple[str, str | None, str | None]:
+    """(subject_id, perfil demo, api key). Con BELO_DEMO_PROFILE es el usuario demo; si no, el del header."""
+    demo = os.getenv("BELO_DEMO_PROFILE")
+    if demo:
+        return f"demo-{demo}", demo, None
     key = request.headers.get(CREDENTIAL_HEADER)
     if not key:
         raise _RequestError(401, "missing_credential", "Conectá tu cuenta belo (header X-Belo-Api-Key).")
+    return subject_id_for(key), None, key
+
+
+async def _profile_for_request(request: Request) -> tuple[ProfileData, str, str | None]:
+    """(perfil multi-source con las fuentes conectadas, subject_id, perfil demo)."""
+    subject_id, demo, key = _identity_for_request(request)
+    if demo:
+        try:
+            return demo_profile(demo), subject_id, demo
+        except ValueError as e:
+            raise _RequestError(500, "unknown_demo_profile", str(e))
     try:
-        return await get_raw(key), subject_id_for(key), None
+        return await get_profile(key), subject_id, None
     except BeloAuthError:
         raise _RequestError(401, "unauthorized", "Tu cuenta belo no dio acceso a los datos necesarios.")
     except BeloAPIError:
@@ -296,10 +310,10 @@ async def _raw_for_request(request: Request) -> tuple[RawData, str, str | None]:
 async def dashboard_transactions(request: Request) -> JSONResponse:
     """Movimientos del usuario con la forma de mocks/mock-transactions.json."""
     try:
-        raw, subject_id, demo_profile = await _raw_for_request(request)
+        profile, subject_id, demo = await _profile_for_request(request)
     except _RequestError as e:
         return e.response
-    return JSONResponse(build_transactions_payload(raw, subject_id, PROFILE_NAMES.get(demo_profile or "")))
+    return JSONResponse(build_transactions_payload(profile, subject_id, PROFILE_NAMES.get(demo or "")))
 
 
 @mcp.custom_route("/api/scoring/profile", methods=["GET"])
@@ -310,11 +324,50 @@ async def scoring_profile(request: Request) -> JSONResponse:
         return JSONResponse({"error": {"code": "invalid_term_months",
                                        "message": "term_months debe ser un entero positivo."}}, status_code=400)
     try:
-        raw, subject_id, demo_profile = await _raw_for_request(request)
+        profile, subject_id, demo = await _profile_for_request(request)
     except _RequestError as e:
         return e.response
-    decision = decide(raw, subject_id, term_months=int(term) if term else None)
-    return JSONResponse(explain_decision(decision, demo=demo_profile is not None))
+    decision = decide(profile, subject_id, term_months=int(term) if term else None)
+    return JSONResponse(explain_decision(decision, demo=demo is not None))
+
+
+def _sources_payload(subject_id: str, demo: str | None) -> dict:
+    connected = {"belo", *connected_source_ids(subject_id, demo)}
+    return {
+        "demo_profile": demo,
+        "sources": [{**s.model_dump(), "connected": s.id in connected} for s in catalog()],
+    }
+
+
+@mcp.custom_route("/api/sources", methods=["GET"])
+async def list_sources(request: Request) -> JSONResponse:
+    """Fuentes disponibles y cuáles tiene conectadas el usuario."""
+    try:
+        subject_id, demo, _ = _identity_for_request(request)
+        return JSONResponse(_sources_payload(subject_id, demo))
+    except _RequestError as e:
+        return e.response
+    except ValueError as e:
+        return JSONResponse({"error": {"code": "invalid_dummy_sources", "message": str(e)}}, status_code=500)
+
+
+@mcp.custom_route("/api/sources/{source_id}", methods=["POST", "DELETE"])
+async def toggle_source(request: Request) -> JSONResponse:
+    """
+    POST conecta y DELETE desconecta una fuente para el usuario. Solo cambia qué datos
+    se combinan (no mueve fondos); el dashboard y el score se recalculan en el próximo request.
+    """
+    source_id = request.path_params["source_id"]
+    try:
+        subject_id, demo, _ = _identity_for_request(request)
+        set_connected(subject_id, source_id, connected=request.method == "POST", demo_profile=demo)
+        return JSONResponse(_sources_payload(subject_id, demo))
+    except _RequestError as e:
+        return e.response
+    except UnknownSourceError as e:
+        return JSONResponse({"error": {"code": "unknown_source", "message": str(e)}}, status_code=404)
+    except LiveSourceError as e:
+        return JSONResponse({"error": {"code": "cannot_disconnect", "message": str(e)}}, status_code=409)
 
 
 @mcp.custom_route("/api/scoring/methodology", methods=["GET"])
@@ -342,7 +395,7 @@ app = mcp.http_app(middleware=[
     Middleware(
         CORSMiddleware,
         allow_origins=DASHBOARD_ORIGINS,
-        allow_methods=["GET"],
+        allow_methods=["GET", "POST", "DELETE"],
         allow_headers=["X-Belo-Api-Key"],
     ),
 ])

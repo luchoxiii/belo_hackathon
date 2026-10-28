@@ -1,4 +1,4 @@
-"""Decisión de crédito auditable: pipeline completo desde RawData. Lógica pura salvo `save_decision`."""
+"""Decisión de crédito auditable: pipeline completo sobre todas las fuentes. Lógica pura salvo `save_decision`."""
 
 import hashlib
 import json
@@ -13,6 +13,8 @@ from belo_scoring import (
 )
 from belo_scoring.aggregate import month_range
 from belo_scoring.models import RawData
+from sources.belo import as_profile
+from sources.models import ProfileData
 
 from .config import SCORECARD_VERSION
 from .features import extract_features
@@ -26,21 +28,23 @@ def subject_id_for(api_key: str) -> str:
     return hashlib.sha256(api_key.encode()).hexdigest()[:16]
 
 
-def decide(raw: RawData, subject_id: str, term_months: int | None = None) -> CreditDecision:
-    fx = fx_for_rates(raw.fx_rates)
-    movements = categorize(raw, fx)
-    savings = build_savings_snapshot(raw, fx)
-    declared = build_declared_profile(raw)
-    months = month_range(raw.window_from.strftime("%Y-%m"), raw.window_to.strftime("%Y-%m"))
+def decide(data: RawData | ProfileData, subject_id: str, term_months: int | None = None) -> CreditDecision:
+    profile = as_profile(data)
+    fx = fx_for_rates(profile.fx_rates)
+    movements = categorize(profile, fx)
+    savings = build_savings_snapshot(profile, fx)
+    declared = build_declared_profile(profile)
+    months = month_range(profile.window_from.strftime("%Y-%m"), profile.window_to.strftime("%Y-%m"))
     monthly = aggregate_monthly(movements, savings, declared, fx=fx, months=months)
 
-    features = extract_features(monthly, savings, declared, as_of=raw.fetched_at)
+    features = extract_features(monthly, savings, declared, as_of=profile.fetched_at, facts=profile.facts)
     decision = CreditDecision(
         subject_id=subject_id,
-        decided_at=raw.fetched_at,
+        decided_at=profile.fetched_at,
         scorecard_version=SCORECARD_VERSION,
         eligible=False,
         features=features,
+        sources=[s.model_dump() for s in profile.sources],
     )
     rejections = check_eligibility(features)
     if rejections:
@@ -50,7 +54,7 @@ def decide(raw: RawData, subject_id: str, term_months: int | None = None) -> Cre
     decision.eligible = True
     decision.score = score(features)
     decision.offer, decision.no_offer_reason = build_offer(
-        features, decision.score, now=raw.fetched_at, term_months=term_months,
+        features, decision.score, now=profile.fetched_at, term_months=term_months,
     )
     return decision
 

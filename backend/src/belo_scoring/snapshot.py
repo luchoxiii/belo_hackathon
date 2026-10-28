@@ -1,14 +1,19 @@
-"""Snapshot de ahorro y perfil declarado. Lógica pura, sin I/O."""
+"""Snapshot de ahorro y perfil declarado sobre todas las fuentes. Lógica pura, sin I/O."""
 
 from decimal import Decimal
 
-from .fx import FxProvider, fx_for_rates, normalize_currency, to_decimal, to_usd
+from sources.models import ProfileData
+
+from .fx import FxProvider, fx_for_rates, normalize_currency, to_usd
 from .models import BalanceSnapshot, DeclaredProfile, RawData, SavingsSnapshot, VaultSnapshot
 
 
-def build_savings_snapshot(raw: RawData, fx: FxProvider | None = None) -> SavingsSnapshot:
-    fx = fx or fx_for_rates(raw.fx_rates)
-    at = raw.fetched_at
+def build_savings_snapshot(data: RawData | ProfileData, fx: FxProvider | None = None) -> SavingsSnapshot:
+    from sources.belo import as_profile  # import local: sources.belo depende de este paquete
+
+    profile = as_profile(data)
+    fx = fx or fx_for_rates(profile.fx_rates)
+    at = profile.fetched_at
     unconverted: set[str] = set()
 
     def usd(amount: Decimal | None, currency: str) -> Decimal | None:
@@ -17,51 +22,42 @@ def build_savings_snapshot(raw: RawData, fx: FxProvider | None = None) -> Saving
             unconverted.add(normalize_currency(currency))
         return value
 
-    balances = []
-    for b in raw.balances:
-        available = to_decimal(b.get("available")) or Decimal(0)
-        earned = b.get("earned") or {}
-        earned_total = to_decimal(earned.get("total")) or Decimal(0)
-        earned_month = to_decimal(earned.get("month")) or Decimal(0)
-        balances.append(BalanceSnapshot(
-            currency=b["currencyCode"],
-            available=available,
-            available_usd=usd(available, b["currencyCode"]),
-            earned_total=earned_total,
-            earned_month=earned_month,
-            earned_total_usd=usd(earned_total, b["currencyCode"]),
-            earned_month_usd=usd(earned_month, b["currencyCode"]),
-            rate=(b.get("yield") or {}).get("rate"),
-        ))
-
-    vaults = []
-    for v in raw.vaults:
-        # El detalle trae `earned`; el listado no
-        detail = raw.vault_details.get(str(v["id"]), v)
-        balance = to_decimal(detail.get("balance")) or Decimal(0)
-        earned = detail.get("earned")
-        earned_total = to_decimal(earned.get("total")) if earned else None
-        earned_month = to_decimal(earned.get("month")) if earned else None
-        currency = detail["currencyCode"]
-        vaults.append(VaultSnapshot(
-            id=str(detail["id"]),
-            name=(detail.get("details") or {}).get("name"),
-            currency=currency,
-            balance=balance,
-            balance_usd=usd(balance, currency),
-            rate=detail.get("rate"),
-            goal_amount=to_decimal((detail.get("details") or {}).get("goalAmount")),
-            earned_total=earned_total,
-            earned_month=earned_month,
-            earned_total_usd=usd(earned_total, currency),
-            earned_month_usd=usd(earned_month, currency),
-        ))
+    balances, vaults = [], []
+    for b in profile.balances:
+        if b.kind == "wallet":
+            earned_total, earned_month = b.earned_total or Decimal(0), b.earned_month or Decimal(0)
+            balances.append(BalanceSnapshot(
+                provider=b.source,
+                currency=b.currency,
+                available=b.available,
+                available_usd=usd(b.available, b.currency),
+                earned_total=earned_total,
+                earned_month=earned_month,
+                earned_total_usd=usd(earned_total, b.currency),
+                earned_month_usd=usd(earned_month, b.currency),
+                rate=b.rate,
+            ))
+        else:
+            vaults.append(VaultSnapshot(
+                provider=b.source,
+                id=b.account_id.removeprefix("vault-"),
+                name=b.name,
+                currency=b.currency,
+                balance=b.available,
+                balance_usd=usd(b.available, b.currency),
+                rate=b.rate,
+                goal_amount=b.goal_amount,
+                earned_total=b.earned_total,
+                earned_month=b.earned_month,
+                earned_total_usd=usd(b.earned_total, b.currency),
+                earned_month_usd=usd(b.earned_month, b.currency),
+            ))
 
     def total(values: list[Decimal | None]) -> Decimal | None:
         known = [v for v in values if v is not None]
         return sum(known, Decimal(0)) if known else None
 
-    vaults_available = "vaults" not in raw.unavailable
+    vaults_available = not any(k.endswith(":vaults") for k in profile.unavailable)
     return SavingsSnapshot(
         taken_at=at,
         balances=balances,
@@ -73,18 +69,21 @@ def build_savings_snapshot(raw: RawData, fx: FxProvider | None = None) -> Saving
     )
 
 
-def build_declared_profile(raw: RawData) -> DeclaredProfile:
+def build_declared_profile(data: RawData | ProfileData) -> DeclaredProfile:
     """
     Perfil declarado. `/end-users` queda fuera por ahora: KYC, ocupación, país
     y compliance flags quedan en None. `civilStatus` nunca se incluye.
     """
+    from sources.belo import as_profile
+
+    profile = as_profile(data)
     return DeclaredProfile(
         kyc_status=None,
         kyc_reason=None,
         occupation=None,
         country=None,
-        declared_annual_revenue=raw.declared_brackets.get("annual_revenue"),
-        declared_monthly_card_spend=raw.declared_brackets.get("monthly_card_spend"),
-        card_application_status=(raw.card_application or {}).get("status"),
+        declared_annual_revenue=profile.declared_brackets.get("annual_revenue"),
+        declared_monthly_card_spend=profile.declared_brackets.get("monthly_card_spend"),
+        card_application_status=profile.card_application_status,
         compliance_flags={"pep": None, "obligatedSubject": None, "usTaxResident": None},
     )

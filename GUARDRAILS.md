@@ -22,6 +22,8 @@
 | **Scoring** | Oferta indicativa | `disclaimer` en cada oferta/simulación; sin tools de desembolso | Compromiso de otorgamiento |
 | **Scoring** | Montos en `Decimal` | Prohibido `float` en `belo_client`, `belo_scoring`, `scoring_engine` | Errores de redondeo con dinero |
 | **Dashboard / Scoring** | REST solo lectura + CORS acotado | `GET /api/dashboard/transactions`, `GET /api/scoring/profile` y `/methodology`; credencial por header; orígenes en `DASHBOARD_ALLOWED_ORIGINS`; sin alias/CVU ni claves de contraparte | Fuga de datos / acceso desde otros sitios |
+| **Fuentes** | Datos dummy marcados | Fuentes dummy (`sources/dummy/`) sin conexión a servicios; `live: false`, `uses_dummy_data` en scoring y `source` en el dashboard | Presentar un score con datos sintéticos como real |
+| **Fuentes** | Únicos endpoints de escritura acotados | `POST`/`DELETE /api/sources/{id}` solo cambian qué fuentes se combinan (por usuario, en `data/connections.json`); no mueven fondos ni se conectan a servicios; belo no se desconecta | Escrituras con efecto financiero |
 | **Datos** | Fuera de git | `data/` y `.env` en `.gitignore` | Datos financieros reales en el repo |
 | **Frontend** | Sanitización | `maxLength={500}` | Prompt injection |
 | **Frontend** | Rate limit | 2s entre mensajes | Abuso de API |
@@ -38,6 +40,7 @@
 | Tool que reciba la API key como argumento | La credencial pasaría por el LLM |
 | Devolver `counterparty_key`, CVU, alias o direcciones en una tool | Datos bancarios sensibles |
 | `BELO_ALLOW_SERVER_CREDENTIAL=true` en producción | Todos los usuarios verían la cuenta del servidor |
+| Presentar un score con `uses_dummy_data: true` como evaluación real | Las fuentes dummy son datos sintéticos |
 | `BELO_DEMO_PROFILE` en producción | Todos verían una oferta de un perfil sintético (marcada `demo: true`) |
 | Usar `civilStatus` o compliance flags como puntos del score | Discriminación / uso indebido |
 | Hardcodear CBU/CVU o la API key | Nunca en código ni variables versionadas |

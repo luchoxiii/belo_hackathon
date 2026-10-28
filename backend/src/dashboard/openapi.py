@@ -67,7 +67,7 @@ def openapi_spec() -> dict[str, Any]:
         },
     }
     rules = spec["paths"]["/api/scoring/methodology"]["get"]["responses"]["200"]["content"]["application/json"]
-    rules["examples"] = {"v1": {"summary": "Scorecard vigente", "value": methodology()}}
+    rules["examples"] = {"current": {"summary": "Scorecard vigente", "value": methodology()}}
     return spec
 
 

@@ -1,5 +1,6 @@
 """
-Servicio de crédito para las tools MCP: credencial -> datos crudos (cacheados) -> decisión.
+Servicio de crédito para las tools MCP y la API REST:
+credencial -> perfil multi-source (belo + fuentes dummy, cacheado) -> decisión.
 
 Sin dependencia de FastMCP. Las salidas `public_*` son lo único que llega al LLM:
 nunca contrapartes, CVU, direcciones ni la credencial.
@@ -13,19 +14,21 @@ from typing import Any
 from belo_client import BeloClient
 from belo_scoring import fetch_raw
 from belo_scoring.models import RawData
+from sources.models import ProfileData
+from sources.registry import connected_source_ids, profile_from_raw
 
 from .config import NO_OFFER_TEXT, REJECTION_TEXT
 from .decision import decide, subject_id_for
-from .demo import demo_raw
+from .demo import demo_profile
 from .models import CreditDecision, LoanOffer
 from .offer import simulate
 
 CACHE_TTL_SECONDS = 600
 WINDOW_DAYS = 180
 
-RawFetcher = Callable[[str], Awaitable[RawData]]
+RawFetcher = Callable[[str], Awaitable[RawData | ProfileData]]
 
-_cache: dict[str, tuple[float, RawData]] = {}
+_cache: dict[str, tuple[float, RawData | ProfileData]] = {}
 
 
 async def _fetch_for_key(api_key: str) -> RawData:
@@ -33,15 +36,22 @@ async def _fetch_for_key(api_key: str) -> RawData:
         return await fetch_raw(WINDOW_DAYS, client=client)
 
 
-async def get_raw(api_key: str, fetcher: RawFetcher = _fetch_for_key) -> RawData:
-    """Cachea los datos crudos por titular (vaults va a 1 req/s y Vercel corta a los 30 s)."""
+async def get_profile(api_key: str, fetcher: RawFetcher = _fetch_for_key) -> ProfileData:
+    """
+    Perfil multi-source del titular. Se cachean solo los datos de belo (vaults va a
+    1 req/s y Vercel corta a los 30 s); las fuentes dummy se arman en cada llamada con
+    las conectadas en ese momento, así conectar/desconectar impacta en el próximo request.
+    """
     subject_id = subject_id_for(api_key)
     cached = _cache.get(subject_id)
     if cached and time.monotonic() - cached[0] < CACHE_TTL_SECONDS:
-        return cached[1]
-    raw = await fetcher(api_key)
-    _cache[subject_id] = (time.monotonic(), raw)
-    return raw
+        data = cached[1]
+    else:
+        data = await fetcher(api_key)
+        _cache[subject_id] = (time.monotonic(), data)
+    if isinstance(data, ProfileData):
+        return data
+    return profile_from_raw(data, subject_id, connected_source_ids(subject_id))
 
 
 async def get_decision(
@@ -49,13 +59,13 @@ async def get_decision(
     term_months: int | None = None,
     fetcher: RawFetcher = _fetch_for_key,
 ) -> CreditDecision:
-    raw = await get_raw(api_key, fetcher)
-    return decide(raw, subject_id_for(api_key), term_months=term_months)
+    data = await get_profile(api_key, fetcher)
+    return decide(data, subject_id_for(api_key), term_months=term_months)
 
 
 def demo_decision(profile: str, term_months: int | None = None) -> CreditDecision:
-    """Decisión sobre un perfil sintético, sin credencial ni llamadas a belo."""
-    return decide(demo_raw(profile), f"demo-{profile}", term_months=term_months)
+    """Decisión sobre un perfil sintético (con sus fuentes dummy), sin credencial ni llamadas a belo."""
+    return decide(demo_profile(profile), f"demo-{profile}", term_months=term_months)
 
 
 def clear_cache() -> None:
@@ -69,6 +79,8 @@ def _is_demo(decision: CreditDecision) -> bool:
 def public_profile(decision: CreditDecision) -> dict[str, Any]:
     result: dict[str, Any] = {
         "demo": _is_demo(decision),
+        "sources": [s["name"] for s in decision.sources],
+        "uses_dummy_data": any(not s["live"] for s in decision.sources),
         "eligible": decision.eligible,
         "scorecard_version": decision.scorecard_version,
         "evaluated_months": decision.features.months_considered,

@@ -16,7 +16,7 @@ import httpx
 
 from belo_client import BeloAPIError, BeloAuthError, BeloClient
 
-from .categorize import parse_datetime
+from sources.models import parse_datetime
 from .fx_source import fetch_ars_rates
 from .models import RawData
 

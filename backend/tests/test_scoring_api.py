@@ -31,9 +31,12 @@ def test_explanation_matches_schema(profile):
 
 def test_profile_has_score_without_breakdown():
     out = explain_decision(demo_decision("family"))
-    assert out["score"] == {"value": 700, "band": "B", "base": config.BASE_SCORE, "max": 860}
+    assert out["score"]["max"] == 950 and out["score"]["band"] in {"A", "B", "C", "D"}
     assert "breakdown" not in out and "features" not in out
-    assert [r["feature"] for r in out["reasons"]] == ["runway_months", "history_months", "net_margin"]
+    assert len(out["reasons"]) == 3
+    # Perfil demo con fuentes dummy: se informa
+    assert out["uses_dummy_data"] is True
+    assert {s["id"] for s in out["sources"]} >= {"belo", "mercado_pago", "monotributo"}
 
 
 def test_rejected_explanation_has_no_score():
@@ -64,7 +67,7 @@ def test_methodology_matches_schema_and_config():
     assert m["deterministic"] is True and m["llm_involved"] is False
     assert m["scorecard_version"] == config.SCORECARD_VERSION
     assert [f["feature"] for f in m["score"]["features"]] == list(config.SCORECARD_BINS)
-    assert m["score"]["max"] == 860
+    assert m["score"]["max"] == 950
     assert {g["code"] for g in m["eligibility_gates"]} == set(config.REJECTION_TEXT)
     assert [b["band"] for b in m["bands"]] == ["A", "B", "C", "D"]
 

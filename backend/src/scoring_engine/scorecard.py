@@ -63,6 +63,12 @@ def score(features: CreditFeatures) -> ScoreResult:
         feature="card_coherence_false", value=features.card_coherence,
         points=ADJUSTMENTS["card_coherence_false"] if features.card_coherence == "false" else 0, max_points=0,
     ))
+    mono = {"up_to_date": ADJUSTMENTS["monotributo_up_to_date"],
+            "in_debt": ADJUSTMENTS["monotributo_in_debt"]}.get(features.monotributo_status, 0)
+    contributions.append(Contribution(
+        feature="monotributo", value=features.monotributo_status,
+        points=mono, max_points=ADJUSTMENTS["monotributo_up_to_date"],
+    ))
     contributions.append(Contribution(
         feature="partial_data", value=str(features.partial_pct),
         points=ADJUSTMENTS["partial_data"] if features.partial_pct > PARTIAL_PENALTY_FROM else 0, max_points=0,

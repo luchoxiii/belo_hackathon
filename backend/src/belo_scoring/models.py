@@ -39,7 +39,9 @@ class RawData(BaseModel):
 
 class CategorizedMovement(BaseModel):
     id: str
-    source: Literal["ledger", "card"]
+    source: Literal["ledger", "card"]   # canal: movimiento de cuenta o consumo con tarjeta
+    provider: str = "belo"               # fuente de datos: belo, mercado_pago, uala...
+    kind: str = "transfer"               # sources.models.MovementKind
     occurred_at: datetime
     category: Category
     subcategory: str
@@ -64,6 +66,7 @@ class CategorizedMovement(BaseModel):
 
 
 class BalanceSnapshot(BaseModel):
+    provider: str = "belo"
     currency: str
     available: Decimal
     available_usd: Decimal | None
@@ -75,6 +78,7 @@ class BalanceSnapshot(BaseModel):
 
 
 class VaultSnapshot(BaseModel):
+    provider: str = "belo"
     id: str
     name: str | None
     currency: str
@@ -112,9 +116,11 @@ class DeclaredProfile(BaseModel):
 
 class IncomeAggregate(BaseModel):
     total_usd: Decimal
-    distinct_sources: int
+    distinct_sources: int                 # pagadores distintos
     top_payer_share: Decimal | None
     recurring_income_usd: Decimal
+    providers: list[str] = Field(default_factory=list)  # fuentes de datos con ingresos (belo, uber...)
+    platform_usd: Decimal = Decimal(0)    # liquidaciones de plataformas
 
 
 class ExpenseAggregate(BaseModel):
@@ -122,6 +128,7 @@ class ExpenseAggregate(BaseModel):
     by_subcategory_usd: dict[str, Decimal]
     fees_taxes_usd: Decimal
     card_usd: Decimal
+    bill_payments: int = 0                # pagos de servicios (Rapipago/PagoFácil...)
 
 
 class MonthAggregate(BaseModel):

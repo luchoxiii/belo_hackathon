@@ -16,6 +16,18 @@ SELF_WALLET = "0x7e85bf28742e26fb4e18d1574f95288186b16c00"
 def belo_env(monkeypatch):
     monkeypatch.setenv("BELO_API_KEY", "belo_live_test")
     monkeypatch.setenv("BELO_BASE_URL", "https://belo.test")
+    monkeypatch.delenv("DUMMY_SOURCES", raising=False)
+
+
+@pytest.fixture(autouse=True)
+def connection_store():
+    """Los tests nunca escriben en backend/data/connections.json."""
+    from sources.connections import InMemoryConnectionStore
+    from sources.registry import set_store
+    store = InMemoryConnectionStore()
+    set_store(store)
+    yield store
+    set_store(None)
 
 
 def receipt(**overrides: Any) -> dict[str, Any]:

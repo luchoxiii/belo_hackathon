@@ -10,7 +10,7 @@ from decimal import Decimal
 
 D = Decimal
 
-SCORECARD_VERSION = "v1-expert"
+SCORECARD_VERSION = "v2-multisource"
 
 BASE_SCORE = 300
 
@@ -22,12 +22,17 @@ SCORECARD_BINS: dict[str, list[tuple[Decimal | None, Decimal | None, int]]] = {
     "runway_months": [(None, D(1), 0), (D(1), D(3), 40), (D(3), D(6), 80), (D(6), None, 110)],
     "history_months": [(None, D(3), 0), (D(3), D(6), 20), (D(6), D(12), 50), (D(12), None, 80)],
     "negative_months_share": [(None, D("0.2"), 60), (D("0.2"), D("0.5"), 30), (D("0.5"), None, 0)],
+    # v2: más fuentes conectadas
+    "income_source_count": [(None, D(2), 0), (D(2), D(3), 20), (D(3), None, 40)],
+    "bill_payment_regularity": [(None, D("0.5"), 0), (D("0.5"), D("0.8"), 10), (D("0.8"), None, 20)],
 }
 
 ADJUSTMENTS = {
     "has_savings_goal": 20,          # tiene un vault con meta
     "card_coherence_false": -30,     # gasto con tarjeta fuera del rango declarado
     "partial_data": -20,             # 10% < partial_pct <= 30%
+    "monotributo_up_to_date": 30,    # v2: Monotributo inscripto y al día
+    "monotributo_in_debt": -30,      # v2: Monotributo con cuotas impagas
 }
 PARTIAL_PENALTY_FROM = D(10)
 
@@ -76,6 +81,24 @@ FEATURE_INFO: dict[str, dict[str, str]] = {
                        "declarado, tarjetas no habilitadas o sin datos.",
         "unit": "true | false | unknown",
     },
+    "income_source_count": {
+        "label": "Diversidad de fuentes de ingreso",
+        "description": "Cantidad de fuentes de datos distintas (belo, Mercado Pago, Uber, OnlyFans...) "
+                       "con ingresos en los meses considerados.",
+        "unit": "fuentes",
+    },
+    "bill_payment_regularity": {
+        "label": "Pago regular de servicios",
+        "description": "Proporción de meses con al menos un pago de servicios (luz, gas, teléfono) "
+                       "registrado, por ejemplo en Rapipago o Pago Fácil.",
+        "unit": "ratio 0-1",
+    },
+    "monotributo_status": {
+        "label": "Monotributo",
+        "description": "Estado en ARCA: 'up_to_date' (inscripto y al día), 'in_debt' (cuotas impagas) "
+                       "o 'not_registered' (sin fuente de Monotributo conectada).",
+        "unit": "up_to_date | in_debt | not_registered",
+    },
     "partial_pct": {
         "label": "Datos incompletos",
         "description": "Porcentaje de movimientos sin comprobante (receipt null) o sin cotización a USD. "
@@ -95,6 +118,9 @@ REASON_TEXT = {
     "card_coherence_false": "El gasto con tarjeta no coincide con lo declarado",
     "partial_data": "Parte de los movimientos no se pudo valorizar",
     "has_savings_goal": "Sin metas de ahorro en vaults",
+    "income_source_count": "Ingresos concentrados en pocas fuentes",
+    "bill_payment_regularity": "Pocos pagos de servicios registrados",
+    "monotributo": "Monotributo no informado o con deuda",
 }
 
 REJECTION_TEXT = {

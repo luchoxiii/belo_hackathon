@@ -3,7 +3,7 @@
   "info": {
     "title": "Savings Wallet API",
     "version": "1.0.0",
-    "description": "API REST de solo lectura sobre la cuenta belo del usuario. No mueve fondos ni otorga préstamos.\n\n**Origen de los datos** (igual en todos los endpoints con datos de usuario)\n- Si el servidor corre con `BELO_DEMO_PROFILE` (`family`, `salaried`, `erratic`, `short_history`), usa ese perfil sintético y no requiere credencial.\n- Si no, usa la cuenta belo del header `X-Belo-Api-Key`.\n\n**dashboard**: panel de gastos con la forma de `mocks/mock-transactions.json`; montos como números JSON.\n\n**scoring**: score crediticio, desglose de reglas y oferta preaprobada simulada. El cálculo es determinístico (reglas fijas en `scoring_engine/config.py`, versionadas); ningún LLM interviene. Montos y ratios como strings decimales, igual que la API de belo."
+    "description": "API REST de solo lectura sobre la cuenta belo del usuario. No mueve fondos ni otorga préstamos.\n\n**Origen de los datos** (igual en todos los endpoints con datos de usuario)\n- Multi-source: cada usuario combina **belo** (real) con fuentes **dummy** (Mercado Pago, MODO, Ualá, Naranja X, OnlyFans, Cuenta DNI, Uber, PedidosYa, Rappi, Rapipago/Pago Fácil, Monotributo) que generan datos sintéticos para enriquecer el scoring. Cada usuario conecta o desconecta fuentes con `POST`/`DELETE /api/sources/{source_id}`; el dashboard y el score se recalculan en el próximo request. Sin configuración propia se usa el default (`DUMMY_SOURCES`, el perfil demo o todas).\n- Si el servidor corre con `BELO_DEMO_PROFILE` (`family`, `salaried`, `erratic`, `short_history`), usa ese perfil sintético y no requiere credencial.\n- Si no, usa la cuenta belo del header `X-Belo-Api-Key`.\n\n**dashboard**: panel de gastos con la forma de `mocks/mock-transactions.json`; montos como números JSON.\n\n**scoring**: score crediticio, desglose de reglas y oferta preaprobada simulada. El cálculo es determinístico (reglas fijas en `scoring_engine/config.py`, versionadas); ningún LLM interviene. Montos y ratios como strings decimales, igual que la API de belo."
   },
   "servers": [
     {
@@ -23,6 +23,10 @@
     {
       "name": "scoring",
       "description": "Score crediticio explicado y oferta preaprobada (simulada). Reglas fijas, sin LLM."
+    },
+    {
+      "name": "sources",
+      "description": "Fuentes de datos (patrón repository)"
     }
   ],
   "paths": {
@@ -228,6 +232,242 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Methodology"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sources": {
+      "get": {
+        "tags": [
+          "sources"
+        ],
+        "operationId": "getSources",
+        "summary": "Fuentes disponibles y las conectadas por el usuario",
+        "description": "Catálogo de fuentes (patrón repository): belo (real, solo lectura) y 11 fuentes dummy con datos sintéticos determinísticos por usuario. `connected` indica las que el usuario tiene conectadas. Si nunca configuró, se usa el default: `DUMMY_SOURCES` (`all`, `none` o lista), las del perfil demo, o todas para usuarios reales.",
+        "security": [
+          {
+            "BeloApiKey": []
+          },
+          {}
+        ],
+        "responses": {
+          "200": {
+            "description": "Fuentes del usuario",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourcesResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "DUMMY_SOURCES mal configurado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Falta la credencial (sin perfil demo activo)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "missing_credential",
+                    "message": "Conectá tu cuenta belo (header X-Belo-Api-Key)."
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sources/{source_id}": {
+      "post": {
+        "tags": [
+          "sources"
+        ],
+        "security": [
+          {
+            "BeloApiKey": []
+          },
+          {}
+        ],
+        "parameters": [
+          {
+            "name": "source_id",
+            "in": "path",
+            "required": true,
+            "description": "Id de la fuente dummy",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "mercado_pago",
+                "modo",
+                "uala",
+                "naranja_x",
+                "onlyfans",
+                "cuenta_dni",
+                "uber",
+                "pedidos_ya",
+                "rappi",
+                "rapipago_pagofacil",
+                "monotributo"
+              ]
+            }
+          }
+        ],
+        "operationId": "connectSource",
+        "summary": "Conectar una fuente",
+        "description": "Conecta la fuente para el usuario. Desde el próximo request, sus movimientos aparecen en `/api/dashboard/transactions` y se incluyen en `/api/scoring/profile` (score, banda y oferta). Idempotente. Solo cambia qué datos se combinan: no mueve fondos ni se conecta a la fuente real.",
+        "responses": {
+          "200": {
+            "description": "Fuentes del usuario, actualizadas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourcesResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Falta la credencial (sin perfil demo activo)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "missing_credential",
+                    "message": "Conectá tu cuenta belo (header X-Belo-Api-Key)."
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Fuente desconocida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "unknown_source",
+                    "message": "Fuente desconocida 'x'. Opciones: mercado_pago, ..."
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "sources"
+        ],
+        "security": [
+          {
+            "BeloApiKey": []
+          },
+          {}
+        ],
+        "parameters": [
+          {
+            "name": "source_id",
+            "in": "path",
+            "required": true,
+            "description": "Id de la fuente dummy",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "mercado_pago",
+                "modo",
+                "uala",
+                "naranja_x",
+                "onlyfans",
+                "cuenta_dni",
+                "uber",
+                "pedidos_ya",
+                "rappi",
+                "rapipago_pagofacil",
+                "monotributo"
+              ]
+            }
+          }
+        ],
+        "operationId": "disconnectSource",
+        "summary": "Desconectar una fuente",
+        "description": "Desconecta la fuente: sus movimientos dejan de aparecer en el dashboard y de contar para el score. Idempotente. belo no se puede desconectar (409).",
+        "responses": {
+          "200": {
+            "description": "Fuentes del usuario, actualizadas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourcesResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Falta la credencial (sin perfil demo activo)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "missing_credential",
+                    "message": "Conectá tu cuenta belo (header X-Belo-Api-Key)."
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Fuente desconocida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "unknown_source",
+                    "message": "Fuente desconocida 'x'. Opciones: mercado_pago, ..."
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "belo no se puede desconectar",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "cannot_disconnect",
+                    "message": "belo es la fuente principal y no se puede desconectar."
+                  }
                 }
               }
             }
@@ -445,7 +685,8 @@
             "type": "string",
             "examples": [
               "balance-ARGt",
-              "vault-demo-vault-vacaciones"
+              "vault-demo-vault-vacaciones",
+              "mercado_pago-mercado_pago-wallet-ARS"
             ]
           },
           "type": {
@@ -476,6 +717,14 @@
           },
           "balance": {
             "$ref": "#/components/schemas/Balance"
+          },
+          "source": {
+            "type": "string",
+            "description": "Fuente de datos de la cuenta",
+            "examples": [
+              "belo",
+              "mercado_pago"
+            ]
           }
         }
       },
@@ -530,7 +779,7 @@
           },
           "category": {
             "type": "string",
-            "description": "Vocabulario de `mock-transactions.json`, asignado por palabra clave en comercio/contraparte.\n\n- Ingresos: `salario`, `freelance`, `reembolso`, `aguinaldo`, `venta_crypto`.\n- Gastos: `alquiler`, `expensas`, `luz`, `gas`, `agua`, `internet`, `telefono`, `cuota_colegio`, `debito_prepaga`, `debito_gimnasio`, `debito_netflix`, `debito_spotify`, `debito_streaming`, `tarjeta_supermercado`, `tarjeta_combustible`, `tarjeta_restaurante`, `tarjeta_farmacia`, `tarjeta_indumentaria`, `tarjeta_tecnologia`, `uber_taxi`, `peaje`, `seguro_auto`, `impuesto_ganancias`, `compra_crypto`.\n- Sin coincidencia (no están en el mock): `transferencia_recibida`, `deposito_crypto`, `transferencia_enviada`, `tarjeta_otros`, `pix_enviado`, `retiro_crypto`.",
+            "description": "Vocabulario de `mock-transactions.json`, asignado por palabra clave en comercio/contraparte.\n\n- Ingresos: `salario` (mismo pagador ≥ 3 meses, monto estable, ≤ 2 depósitos/mes), `freelance`, `ventas`, `ingreso_plataforma` (Uber, PedidosYa, Rappi, OnlyFans), `reembolso`, `aguinaldo`, `venta_crypto`.\n- Gastos: `alquiler`, `expensas`, `luz`, `gas`, `agua`, `internet`, `telefono`, `cuota_colegio`, `debito_prepaga`, `debito_gimnasio`, `debito_netflix`, `debito_spotify`, `debito_streaming`, `tarjeta_supermercado`, `tarjeta_combustible`, `tarjeta_restaurante`, `tarjeta_farmacia`, `tarjeta_indumentaria`, `tarjeta_tecnologia`, `uber_taxi`, `peaje`, `seguro_auto`, `impuesto_ganancias`, `compra_crypto`, `monotributo`, `compras_online`, `delivery`, `suscripciones`, `pago_qr`.\n- Sin coincidencia (no están en el mock): `transferencia_recibida`, `deposito_crypto`, `transferencia_enviada`, `tarjeta_otros`, `pix_enviado`, `retiro_crypto`, `servicios`, `impuestos`, `compras_plataforma`.",
             "examples": [
               "tarjeta_supermercado",
               "salario",
@@ -571,9 +820,10 @@
               "tarjeta_debito",
               "transferencia",
               "crypto",
-              "plazo_fijo"
+              "plazo_fijo",
+              "efectivo"
             ],
-            "description": "Hoy se emiten `tarjeta_debito` (tarjeta belo), `transferencia` y `crypto`."
+            "description": "Hoy se emiten `tarjeta_debito` (tarjetas que debitan del saldo), `tarjeta_credito` (Naranja X), `transferencia`, `crypto` y `efectivo` (pago de servicios en Rapipago/Pago Fácil)."
           },
           "createdAt": {
             "type": "string",
@@ -594,6 +844,15 @@
           },
           "investment": {
             "$ref": "#/components/schemas/InvestmentInfo"
+          },
+          "source": {
+            "type": "string",
+            "description": "Fuente de datos del movimiento (`belo`, `mercado_pago`, `uber`...). Campo agregado respecto del mock.",
+            "examples": [
+              "belo",
+              "mercado_pago",
+              "uber"
+            ]
           }
         }
       },
@@ -731,7 +990,10 @@
                   "unauthorized",
                   "upstream_error",
                   "unknown_demo_profile",
-                  "invalid_term_months"
+                  "invalid_term_months",
+                  "invalid_dummy_sources",
+                  "unknown_source",
+                  "cannot_disconnect"
                 ]
               },
               "message": {
@@ -752,7 +1014,9 @@
           "score",
           "reasons",
           "offer",
-          "no_offer_reason"
+          "no_offer_reason",
+          "sources",
+          "uses_dummy_data"
         ],
         "properties": {
           "demo": {
@@ -817,6 +1081,17 @@
               }
             ],
             "description": "Por qué no hay oferta siendo elegible: `low_score`, `no_payment_capacity`, `amount_below_minimum`"
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SourceInfo"
+            },
+            "description": "Fuentes combinadas en esta decisión"
+          },
+          "uses_dummy_data": {
+            "type": "boolean",
+            "description": "`true` si alguna fuente usada es dummy (datos sintéticos). No presentar el resultado como real."
           }
         }
       },
@@ -1286,6 +1561,70 @@
           "points": {
             "type": "integer",
             "description": "Bono (+) o penalidad (−)"
+          }
+        }
+      },
+      "SourceInfo": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "live"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "examples": [
+              "mercado_pago"
+            ]
+          },
+          "name": {
+            "type": "string",
+            "examples": [
+              "Mercado Pago"
+            ]
+          },
+          "live": {
+            "type": "boolean",
+            "description": "`true` = datos reales (belo con credencial); `false` = dummy o perfil demo"
+          }
+        }
+      },
+      "SourcesResponse": {
+        "type": "object",
+        "required": [
+          "demo_profile",
+          "sources"
+        ],
+        "properties": {
+          "demo_profile": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Perfil demo activo, si hay"
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/SourceInfo"
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "connected"
+                  ],
+                  "properties": {
+                    "connected": {
+                      "type": "boolean",
+                      "description": "Si el usuario tiene la fuente conectada (se combina en el dashboard y el score)"
+                    }
+                  }
+                }
+              ]
+            }
           }
         }
       }
