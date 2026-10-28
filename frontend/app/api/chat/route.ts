@@ -34,8 +34,6 @@ import {
   financialEventSchema,
   settingsSchema,
 } from '@/lib/types'
-import { readFileSync, existsSync } from 'fs'
-import { join } from 'path'
 
 export const maxDuration = 60
 
@@ -81,7 +79,7 @@ type MockData = {
 const BACKEND_API_URL = process.env.BACKEND_API_URL || 'http://localhost:8000'
 
 async function loadMockData(): Promise<MockData> {
-  // Try to fetch from backend first
+  // Fetch from backend API (required)
   try {
     const response = await fetch(`${BACKEND_API_URL}/api/dashboard/transactions`, {
       next: { revalidate: 60 }, // Cache for 1 minute
@@ -93,22 +91,13 @@ async function loadMockData(): Promise<MockData> {
         accounts: data.accounts || [],
       }
     }
-  } catch {
-    // Backend not available, fall back to static file
+    console.error('[Chat API] Backend returned non-OK status:', response.status)
+  } catch (error) {
+    console.error('[Chat API] Error fetching from backend:', error)
   }
 
-  // Fallback to static file
-  const dataPath = join(process.cwd(), 'data', 'mock-transactions.json')
-  if (!existsSync(dataPath)) return { transactions: [] }
-  try {
-    const data = JSON.parse(readFileSync(dataPath, 'utf-8'))
-    return {
-      transactions: data.transactions || [],
-      accounts: data.accounts || [],
-    }
-  } catch {
-    return { transactions: [] }
-  }
+  // Return empty if backend not available
+  return { transactions: [], accounts: [] }
 }
 
 // Scoring data types
@@ -147,8 +136,42 @@ type ScoringData = {
   }
 }
 
-// USD to ARS conversion rate (approximate, in real app would be fetched)
-const USD_TO_ARS = 1200
+// Fetch real USD/ARS exchange rate from dolarapi.com
+type DolarRate = {
+  casa: string
+  nombre: string
+  compra: number
+  venta: number
+  fechaActualizacion: string
+}
+
+let cachedDolarRate: { rate: number; fetchedAt: number } | null = null
+const DOLAR_CACHE_MS = 5 * 60 * 1000 // 5 minutes cache
+
+async function fetchDolarCripto(): Promise<number> {
+  // Return cached rate if fresh
+  if (cachedDolarRate && Date.now() - cachedDolarRate.fetchedAt < DOLAR_CACHE_MS) {
+    return cachedDolarRate.rate
+  }
+
+  try {
+    const response = await fetch('https://dolarapi.com/v1/dolares/cripto', {
+      next: { revalidate: 300 }, // 5 min cache
+    })
+    if (response.ok) {
+      const data: DolarRate = await response.json()
+      const rate = data.venta // Use sell rate
+      cachedDolarRate = { rate, fetchedAt: Date.now() }
+      console.log(`[Dolar API] Cripto rate: $${rate} ARS/USD`)
+      return rate
+    }
+  } catch (error) {
+    console.error('[Dolar API] Error fetching rate:', error)
+  }
+
+  // Fallback to cached or default
+  return cachedDolarRate?.rate || 1500
+}
 
 async function loadScoringData(): Promise<ScoringData | null> {
   try {
@@ -509,10 +532,11 @@ export async function POST(req: Request) {
   const { events: userEvents, settings } = parsed.data
   const today = todayInArgentina()
 
-  // Load mock data (transactions + accounts) and scoring data
-  const [mockData, scoringData] = await Promise.all([
+  // Load mock data (transactions + accounts), scoring data, and real dollar rate
+  const [mockData, scoringData, usdToArs] = await Promise.all([
     loadMockData(),
     loadScoringData(),
+    fetchDolarCripto(),
   ])
   const transactions = mockData.transactions
 
@@ -540,6 +564,18 @@ export async function POST(req: Request) {
   const result = streamText({
     model: anthropic('claude-sonnet-4-5-20250929'),
     instructions: `Sos el asistente financiero de Belo para usuarios en Argentina. Respondés en español rioplatense (voseo), con tono cercano y persuasivo. Tu objetivo es ayudar al usuario a tomar decisiones financieras inteligentes, y cuando corresponda, ofrecerle los **préstamos personales de Belo** como la mejor opción.
+
+⚠️ REGLA CRÍTICA - LEER PRIMERO ⚠️
+Cuando el usuario pregunte si puede comprar/pagar algo:
+1. PRIMERO llamá a "evaluarGasto" para ver si puede en cash
+2. INMEDIATAMENTE DESPUÉS llamá a "consultarOfertaCredito" para saber su préstamo disponible
+3. SIEMPRE mencioná la opción del préstamo Belo en tu respuesta, incluso si puede pagar en cash
+4. NUNCA digas "no podés" sin antes ofrecer la alternativa del préstamo Belo
+
+Si el usuario NO puede pagar algo en cash, tu respuesta DEBE incluir:
+- El monto máximo del préstamo Belo disponible
+- Las cuotas mensuales calculadas
+- Cómo el préstamo le permite comprar HOY
 
 Fecha de hoy: ${today.iso}. Moneda: pesos argentinos (ARS). Inflación mensual: ${settings.monthlyInflation}% (~${(Math.pow(1 + settings.monthlyInflation / 100, 12) * 100 - 100).toFixed(0)}% anual).
 
@@ -634,8 +670,18 @@ La herramienta devuelve:
 - cuotaMensualARS: La cuota mensual para el plazo dado
 - tasaNominalAnual y tasaEfectivaAnual: Las tasas reales
 - plazoMinimo y plazoMaximo: Plazos disponibles
+- razones: Por qué el score es lo que es (mostrar si el usuario pregunta)
 
 Usá ESTOS DATOS REALES al responder, no inventes montos.
+
+=== NUNCA SUGERIR PRÉSTAMOS EXTERNOS ===
+PROHIBIDO sugerir que el usuario busque préstamos en bancos, financieras u otras apps.
+Si el préstamo de Belo no alcanza para lo que quiere:
+1. Explicá cuánto SÍ puede obtener con Belo
+2. Sugerí alternativas: ahorrar, buscar algo más económico, o combinar cash + préstamo Belo
+3. Si pregunta por qué el monto es bajo, usá "verDetalleScoring" para explicar las razones y cómo mejorar
+
+NUNCA digas "podés buscar financiación en otro lado" o "averiguá en un banco".
 
 === ARGUMENTOS DE VENTA DEL CRÉDITO BELO ===
 Usá estos argumentos cuando ofrezcas el préstamo:
@@ -656,17 +702,32 @@ Usá estos argumentos cuando ofrezcas el préstamo:
 - Formateá montos como $1.250.000
 - No uses tablas ni títulos con #
 
-=== ALERTAS PROACTIVAS (MUY IMPORTANTE) ===
-Al final de cada respuesta sobre gastos o finanzas, SIEMPRE verificá si hay algo que alertar:
+=== COMPORTAMIENTO PROACTIVO (MUY IMPORTANTE) ===
+Sos un asesor financiero PROACTIVO. No esperés a que te pregunten - analizá y sugerí.
 
-1. **Llamá "detectarGastosAnuales"** para ver si hay gastos próximos (seguros, impuestos, matrículas)
-   - Si hay gastos en los próximos 30 días, alertá: "Ojo que en [fecha] te viene [gasto] de ~$X"
+**EN LA PRIMERA INTERACCIÓN O CUANDO PREGUNTEN SOBRE FINANZAS:**
+1. SIEMPRE llamá "analizarGastosRecurrentes" primero
+2. Si hay pagos manuales frecuentes (OSDE, alquiler, servicios), mencioná:
+   "Vi que pagás [X servicios] todos los meses manualmente. Puedo ayudarte a crear las transferencias para que solo las confirmes desde la app. ¿Querés?"
 
-2. **Llamá "analizarGastosRecurrentes"** cuando hables de gastos fijos
-   - Si detecta pagos manuales frecuentes, ofrecé: "Vi que pagás [servicio] todos los meses manualmente. ¿Querés que te ayude a programar una transferencia automática desde Belo?"
+**DESPUÉS DE CUALQUIER RESPUESTA SOBRE GASTOS:**
+1. Llamá "detectarGastosAnuales" - si hay algo próximo, alertá
+2. Llamá "detectarVencimientosPlazoFijo" si el saldo es alto
 
-3. **Llamá "detectarVencimientosPlazoFijo"** si el usuario tiene buen saldo
-   - Alertá sobre plazos fijos por vencer para renovar
+**EJEMPLO DE RESPUESTA PROACTIVA:**
+Usuario: "Hola, quiero ver mis gastos"
+Agente: [Llama analizarGastosRecurrentes]
+"¡Hola! Acá tenés un resumen de tus finanzas...
+
+Por cierto, vi que tenés **6 pagos que hacés todos los meses manualmente**:
+- OSDE ($420.000)
+- Alquiler ($650.000)
+- Colegio ($280.000)
+- Fibertel, Personal, Edenor...
+
+¿Querés que te ayude a crear las transferencias para estos pagos? Solo tendrías que confirmarlas una vez desde la app de Belo y listo."
+
+**NO SEAS TÍMIDO** - si detectás algo útil, mencionalo sin que te pregunten.
 
 === CÓMO MANEJAR TRANSFERENCIAS ===
 Podés ayudar al usuario a CREAR transferencias pendientes que luego confirma en la app de Belo.
@@ -888,14 +949,15 @@ Cuando detectes gastos recurrentes manuales, sugerí:
           const o = offer.offer
           const montoMaxUSD = parseFloat(o.amount_max_usd)
           const cuotaUSD = parseFloat(o.installment_usd)
-          const montoMaxARS = Math.round(montoMaxUSD * USD_TO_ARS)
-          const cuotaARS = Math.round(cuotaUSD * USD_TO_ARS)
+          const montoMaxARS = Math.round(montoMaxUSD * usdToArs)
+          const cuotaARS = Math.round(cuotaUSD * usdToArs)
 
           return {
             disponible: true,
             elegible: true,
             score: profile.score,
             banda: profile.band,
+            razonesDelScore: profile.reasons || [],
             oferta: {
               montoMaximoUSD: montoMaxUSD,
               montoMaximoARS: montoMaxARS,
@@ -907,11 +969,52 @@ Cuando detectes gastos recurrentes manuales, sugerí:
               cuotaMensualUSD: cuotaUSD,
               cuotaMensualARS: cuotaARS,
               totalAPagarUSD: parseFloat(o.total_payable_usd),
-              totalAPagarARS: Math.round(parseFloat(o.total_payable_usd) * USD_TO_ARS),
+              totalAPagarARS: Math.round(parseFloat(o.total_payable_usd) * usdToArs),
               validoHasta: o.valid_until,
             },
             disclaimer: o.disclaimer,
             esDemo: offer.demo,
+          }
+        },
+      }),
+      verDetalleScoring: tool({
+        description:
+          'Muestra el detalle del scoring crediticio del usuario: puntaje, banda, razones y cómo mejorar. Usá esta herramienta cuando el usuario pregunte por qué su préstamo es bajo o quiera entender su score.',
+        inputSchema: z.object({}),
+        execute: async () => {
+          if (!scoringData) {
+            return {
+              disponible: false,
+              mensaje: 'No pudimos consultar tu scoring en este momento.',
+            }
+          }
+
+          const { profile, offer } = scoringData
+
+          // Consejos para mejorar el score basados en las razones
+          const consejos: Record<string, string> = {
+            'Poco colchón de ahorro respecto de tus gastos': 'Mantené un saldo equivalente a 2-3 meses de gastos',
+            'Historial de movimientos corto': 'Seguí usando Belo regularmente, el historial mejora con el tiempo',
+            'Gastás una parte alta de lo que ingresa': 'Intentá que tus gastos no superen el 70% de tus ingresos',
+            'Ingresos irregulares': 'Regularizá tus ingresos o demostrá ingresos estables por más meses',
+          }
+
+          const mejoras = (profile.reasons || []).map(r => consejos[r] || 'Seguí usando Belo regularmente')
+
+          return {
+            score: profile.score,
+            banda: profile.band,
+            bandaExplicacion: {
+              'A': 'Excelente - Acceso a los mejores montos y tasas',
+              'B': 'Bueno - Buen acceso a crédito con tasas competitivas',
+              'C': 'Regular - Acceso limitado, tasas más altas',
+              'D': 'Bajo - Acceso muy limitado',
+            }[profile.band] || 'Sin clasificar',
+            razones: profile.reasons || [],
+            comoMejorar: mejoras,
+            mesesEvaluados: profile.evaluated_months?.length || 0,
+            montoActual: offer.offer ? `$${Math.round(parseFloat(offer.offer.amount_max_usd) * usdToArs).toLocaleString('es-AR')}` : 'No disponible',
+            mensaje: `Tu score es ${profile.score} (Banda ${profile.band}). ${profile.reasons?.length ? 'Las razones principales son: ' + profile.reasons.join(', ') + '.' : ''}`
           }
         },
       }),
