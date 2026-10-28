@@ -2,8 +2,14 @@
 Simple REST server for dashboard data - no MCP/fastmcp dependency.
 Runs on Python 3.8+ with just httpx, pydantic, and starlette.
 """
+import json
 import os
 import sys
+
+# Load .env file
+from dotenv import load_dotenv
+load_dotenv()
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
 
 from datetime import datetime, timezone
@@ -14,6 +20,7 @@ from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
+from belo_client import BeloClient, BeloAPIError, BeloAuthError
 from dashboard import build_transactions_payload
 from scoring_engine.demo import PROFILE_NAMES, demo_raw
 from scoring_engine.service import demo_decision, public_offer, public_profile, public_simulation
@@ -103,18 +110,111 @@ async def scoring_simulate(request):
         return JSONResponse({"error": {"code": "invalid_profile", "message": str(e)}}, status_code=400)
 
 
+# --- Transfer endpoints (requieren BELO_API_KEY real) ---
+
+async def transfer_contacts(request):
+    """
+    GET /api/transfers/contacts
+    Lista contactos de la libreta de direcciones.
+    Query params: search (optional)
+    """
+    search = request.query_params.get("search")
+
+    try:
+        async with BeloClient() as client:
+            contacts = await client.get_contacts(search)
+            # Simplificar la respuesta para el frontend
+            simplified = []
+            for c in contacts:
+                for account in c.get("accounts", []):
+                    for addr in account.get("addresses", []):
+                        simplified.append({
+                            "id": c.get("id"),
+                            "name": c.get("name") or c.get("nickname") or c.get("belotag"),
+                            "nickname": c.get("nickname"),
+                            "belotag": c.get("belotag"),
+                            "isFavorite": c.get("isFavorite", False),
+                            "tier": c.get("tier"),
+                            "currency": account.get("currency"),
+                            "ownerName": account.get("ownerName"),
+                            "addressType": addr.get("addressType"),
+                            "address": addr.get("address"),
+                        })
+            return JSONResponse({"data": simplified})
+    except BeloAuthError:
+        return JSONResponse({"error": {"code": "unauthorized", "message": "API key inválida o sin permisos"}}, status_code=401)
+    except BeloAPIError as e:
+        return JSONResponse({"error": {"code": "api_error", "message": str(e)}}, status_code=502)
+
+
+async def transfer_preview(request):
+    """
+    POST /api/transfers/preview
+    Crea una transferencia PENDIENTE (el usuario la confirma en la app de Belo).
+
+    Body JSON:
+    {
+        "address": "alias.o.cbu.del.destinatario",
+        "addressType": "ALIAS" | "CBU" | "CVU" | "BELOTAG" | etc,
+        "amount": "10000.00",
+        "currency": "ARS"
+    }
+
+    Retorna:
+    {
+        "id": "uuid-de-la-transaccion",
+        "status": "pending",
+        "amount": "10000.00",
+        "fee": "0.00",
+        "expiresAt": "2026-10-28T...",
+        "message": "Transferencia pendiente creada. Confirmala en la app de Belo."
+    }
+    """
+    try:
+        body = await request.json()
+    except json.JSONDecodeError:
+        return JSONResponse({"error": {"code": "invalid_json", "message": "Body debe ser JSON válido"}}, status_code=400)
+
+    # Validar campos requeridos
+    required = ["address", "addressType", "amount", "currency"]
+    missing = [f for f in required if not body.get(f)]
+    if missing:
+        return JSONResponse({
+            "error": {"code": "missing_fields", "message": f"Campos requeridos: {', '.join(missing)}"}
+        }, status_code=400)
+
+    try:
+        async with BeloClient() as client:
+            result = await client.preview_transfer(
+                address=body["address"],
+                address_type=body["addressType"],
+                amount=body["amount"],
+                currency=body["currency"],
+                quote_currency=body.get("quoteCurrency"),
+            )
+            # Agregar mensaje instructivo
+            result["message"] = "✅ Transferencia pendiente creada. Abrí la app de Belo para confirmarla."
+            return JSONResponse(result)
+    except BeloAuthError:
+        return JSONResponse({"error": {"code": "unauthorized", "message": "API key inválida o sin permisos"}}, status_code=401)
+    except BeloAPIError as e:
+        return JSONResponse({"error": {"code": "transfer_error", "message": str(e)}}, status_code=400)
+
+
 routes = [
     Route("/", health),
     Route("/api/dashboard/transactions", dashboard_transactions),
     Route("/api/scoring/profile", scoring_profile),
     Route("/api/scoring/simulate", scoring_simulate),
+    Route("/api/transfers/contacts", transfer_contacts),
+    Route("/api/transfers/preview", transfer_preview, methods=["POST"]),
 ]
 
 middleware = [
     Middleware(
         CORSMiddleware,
         allow_origins=DASHBOARD_ORIGINS,
-        allow_methods=["GET"],
+        allow_methods=["GET", "POST"],
         allow_headers=["*"],
     ),
 ]
@@ -128,7 +228,9 @@ if __name__ == "__main__":
     print(f"🚀 Starting simple server on http://localhost:{port}")
     print(f"   Profile: {DEMO_PROFILE}")
     print(f"   Endpoints:")
-    print(f"     GET /api/dashboard/transactions")
-    print(f"     GET /api/scoring/profile")
-    print(f"     GET /api/scoring/simulate?amount_usd=X&term_months=Y")
+    print(f"     GET  /api/dashboard/transactions")
+    print(f"     GET  /api/scoring/profile")
+    print(f"     GET  /api/scoring/simulate?amount_usd=X&term_months=Y")
+    print(f"     GET  /api/transfers/contacts?search=X")
+    print(f"     POST /api/transfers/preview")
     uvicorn.run(app, host="0.0.0.0", port=port)

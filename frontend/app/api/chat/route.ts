@@ -164,6 +164,67 @@ async function loadScoringData(): Promise<ScoringData | null> {
   return null
 }
 
+// Transfer types
+type Contact = {
+  id: string
+  name: string
+  nickname?: string
+  belotag?: string
+  isFavorite: boolean
+  tier?: string
+  currency?: string
+  ownerName?: string
+  addressType: string
+  address: string
+}
+
+type TransferPreview = {
+  id: string
+  status: 'pending' | 'success' | 'failed'
+  amount: string
+  fee: string
+  expiresAt?: string
+  message: string
+}
+
+async function searchContacts(search?: string): Promise<Contact[]> {
+  try {
+    const url = search
+      ? `${BACKEND_API_URL}/api/transfers/contacts?search=${encodeURIComponent(search)}`
+      : `${BACKEND_API_URL}/api/transfers/contacts`
+    const response = await fetch(url)
+    if (response.ok) {
+      const data = await response.json()
+      return data.data || []
+    }
+  } catch {
+    // Backend not available or API key not configured
+  }
+  return []
+}
+
+async function createTransferPreview(
+  address: string,
+  addressType: string,
+  amount: string,
+  currency: string,
+): Promise<TransferPreview | { error: string }> {
+  try {
+    const response = await fetch(`${BACKEND_API_URL}/api/transfers/preview`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ address, addressType, amount, currency }),
+    })
+    const data = await response.json()
+    if (!response.ok) {
+      return { error: data.error?.message || 'Error al crear la transferencia' }
+    }
+    return data
+  } catch {
+    return { error: 'No se pudo conectar con el servidor de transferencias' }
+  }
+}
+
 // Get balance from accounts (realistic) instead of summing all transactions
 function getAccountBalance(accounts: MockData['accounts']): number {
   if (!accounts || accounts.length === 0) return 0
@@ -595,10 +656,45 @@ Usá estos argumentos cuando ofrezcas el préstamo:
 - Formateá montos como $1.250.000
 - No uses tablas ni títulos con #
 
-=== HERRAMIENTAS ADICIONALES ===
-- "detectarVencimientosPlazoFijo": Para ofrecer renovación de plazos fijos
-- "analizarGastosRecurrentes": Para sugerir automatizar pagos
-- "detectarGastosAnuales": Para alertar sobre gastos esporádicos próximos`,
+=== ALERTAS PROACTIVAS (MUY IMPORTANTE) ===
+Al final de cada respuesta sobre gastos o finanzas, SIEMPRE verificá si hay algo que alertar:
+
+1. **Llamá "detectarGastosAnuales"** para ver si hay gastos próximos (seguros, impuestos, matrículas)
+   - Si hay gastos en los próximos 30 días, alertá: "Ojo que en [fecha] te viene [gasto] de ~$X"
+
+2. **Llamá "analizarGastosRecurrentes"** cuando hables de gastos fijos
+   - Si detecta pagos manuales frecuentes, ofrecé: "Vi que pagás [servicio] todos los meses manualmente. ¿Querés que te ayude a programar una transferencia automática desde Belo?"
+
+3. **Llamá "detectarVencimientosPlazoFijo"** si el usuario tiene buen saldo
+   - Alertá sobre plazos fijos por vencer para renovar
+
+=== CÓMO MANEJAR TRANSFERENCIAS ===
+Podés ayudar al usuario a CREAR transferencias pendientes que luego confirma en la app de Belo.
+
+**FLUJO DE TRANSFERENCIA:**
+1. Usuario dice "mandále plata a Juan" o "pagale $5000 a mi hermano"
+2. Usá "buscarContacto" para encontrar al destinatario
+3. Confirmá con el usuario: "Encontré a Juan Pérez (alias: juan.perez). ¿Le mando $5000?"
+4. Si confirma, usá "crearTransferencia" con los datos
+5. Explicá que debe abrir la app de Belo para confirmar
+
+**EJEMPLO DE RESPUESTA AL CREAR TRANSFERENCIA:**
+"¡Listo! Creé una transferencia pendiente de **$5.000** para Juan Pérez.
+
+Para completarla:
+1. Abrí la app de Belo
+2. Vas a ver la transferencia esperando confirmación
+3. Revisá que esté todo bien y confirmala
+4. Se envía al instante ✓
+
+La transferencia expira en [tiempo], así que confirmala pronto."
+
+**SI NO ENCUENTRA EL CONTACTO:**
+"No encontré a [nombre] en tus contactos. ¿Me pasás su alias o CBU para hacer la transferencia?"
+
+**GASTOS RECURRENTES:**
+Cuando detectes gastos recurrentes manuales, sugerí:
+"Vi que le pagás a [comercio] todos los meses. Si querés, puedo crear la transferencia ahora y vos solo la confirmás en la app. ¿Te sirve?"`,
     messages: await convertToModelMessages(normalizeMessages(messages)),
     stopWhen: isStepCount(6),
     tools: {
@@ -816,6 +912,75 @@ Usá estos argumentos cuando ofrezcas el préstamo:
             },
             disclaimer: o.disclaimer,
             esDemo: offer.demo,
+          }
+        },
+      }),
+      buscarContacto: tool({
+        description:
+          'Busca contactos en la libreta de direcciones del usuario. Usá esta herramienta cuando el usuario quiera enviar dinero a alguien y necesites encontrar sus datos (CBU, alias, belotag).',
+        inputSchema: z.object({
+          busqueda: z.string().optional().describe('Nombre, nickname o belotag a buscar. Si está vacío, devuelve los contactos favoritos/frecuentes.'),
+        }),
+        execute: async ({ busqueda }) => {
+          const contactos = await searchContacts(busqueda)
+
+          if (contactos.length === 0) {
+            return {
+              encontrados: false,
+              mensaje: busqueda
+                ? `No encontré ningún contacto con "${busqueda}". ¿Podés darme el alias o CBU directamente?`
+                : 'No hay contactos guardados. Necesito que me pases el alias o CBU del destinatario.',
+            }
+          }
+
+          return {
+            encontrados: true,
+            cantidad: contactos.length,
+            contactos: contactos.slice(0, 10).map(c => ({
+              nombre: c.name || c.nickname || c.belotag || 'Sin nombre',
+              belotag: c.belotag,
+              tipoDestino: c.addressType,
+              destino: c.addressType === 'BELOTAG' ? c.belotag : c.address,
+              esFavorito: c.isFavorite,
+              moneda: c.currency || 'ARS',
+            })),
+          }
+        },
+      }),
+      crearTransferencia: tool({
+        description:
+          'Crea una transferencia PENDIENTE que el usuario debe confirmar desde la app de Belo. Usá esta herramienta cuando el usuario confirme que quiere enviar dinero a alguien.',
+        inputSchema: z.object({
+          destino: z.string().describe('Dirección de destino: alias, CBU, CVU o belotag'),
+          tipoDestino: z.enum(['ALIAS', 'CBU', 'CVU', 'BELOTAG']).describe('Tipo de dirección de destino'),
+          monto: z.string().describe('Monto a enviar (número decimal como string, ej: "50000.00")'),
+          moneda: z.enum(['ARS', 'USD', 'USDT']).default('ARS').describe('Moneda a enviar'),
+        }),
+        execute: async ({ destino, tipoDestino, monto, moneda }) => {
+          const result = await createTransferPreview(destino, tipoDestino, monto, moneda)
+
+          if ('error' in result) {
+            return {
+              exito: false,
+              mensaje: result.error,
+              sugerencia: 'Verificá que el alias/CBU sea correcto y que tengas saldo suficiente.',
+            }
+          }
+
+          return {
+            exito: true,
+            transaccionId: result.id,
+            estado: 'pendiente',
+            monto: result.amount,
+            comision: result.fee,
+            expira: result.expiresAt,
+            mensaje: result.message,
+            instrucciones: [
+              '1. Abrí la app de Belo',
+              '2. Vas a ver la transferencia pendiente',
+              '3. Revisá los datos y confirmala',
+              '4. ¡Listo! El dinero se envía al instante',
+            ],
           }
         },
       }),
