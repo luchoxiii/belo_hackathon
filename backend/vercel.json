@@ -12,6 +12,14 @@
     {
       "source": "/api/dashboard/:path*",
       "destination": "/api/index"
+    },
+    {
+      "source": "/api/scoring/:path*",
+      "destination": "/api/index"
+    },
+    {
+      "source": "/api/docs",
+      "destination": "/api/index"
     }
   ]
 }

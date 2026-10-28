@@ -11,9 +11,11 @@ from fastmcp.exceptions import ToolError
 from fastmcp.server.dependencies import get_http_headers
 
 from belo_client import BeloAPIError, BeloAuthError
+from belo_scoring.models import RawData
 from dashboard import build_transactions_payload
 from dashboard.openapi import openapi_spec, swagger_html
-from scoring_engine import OfferError, subject_id_for
+from scoring_engine import OfferError, decide, subject_id_for
+from scoring_engine.explain import explain_decision, methodology
 from scoring_engine.demo import PROFILE_NAMES, demo_raw
 from scoring_engine.service import demo_decision, get_decision, get_raw, public_offer, public_profile, public_simulation
 
@@ -263,38 +265,62 @@ async def simulate_loan(amount_usd: str, term_months: int) -> dict:
         raise ToolError(str(e))
 
 
-# --- Dashboard: panel de gastos (REST, solo lectura) ---
+# --- API REST (solo lectura): dashboard y scoring ---
 
-@mcp.custom_route("/api/dashboard/transactions", methods=["GET"])
-async def dashboard_transactions(request: Request) -> JSONResponse:
-    """
-    Movimientos del usuario con la forma de mocks/mock-transactions.json.
-    Con BELO_DEMO_PROFILE usa el perfil demo; si no, la credencial del header.
-    """
+class _RequestError(Exception):
+    def __init__(self, status: int, code: str, message: str):
+        self.response = JSONResponse({"error": {"code": code, "message": message}}, status_code=status)
+
+
+async def _raw_for_request(request: Request) -> tuple[RawData, str, str | None]:
+    """(raw, subject_id, perfil demo). Con BELO_DEMO_PROFILE usa el perfil demo; si no, el header."""
     demo_profile = os.getenv("BELO_DEMO_PROFILE")
     if demo_profile:
         try:
-            raw = demo_raw(demo_profile)
+            return demo_raw(demo_profile), f"demo-{demo_profile}", demo_profile
         except ValueError as e:
-            return JSONResponse({"error": {"code": "unknown_demo_profile", "message": str(e)}}, status_code=500)
-        return JSONResponse(build_transactions_payload(raw, f"demo-{demo_profile}", PROFILE_NAMES.get(demo_profile)))
+            raise _RequestError(500, "unknown_demo_profile", str(e))
 
     key = request.headers.get(CREDENTIAL_HEADER)
     if not key:
-        return JSONResponse({"error": {"code": "missing_credential",
-                                       "message": "Conectá tu cuenta belo (header X-Belo-Api-Key)."}},
-                            status_code=401)
+        raise _RequestError(401, "missing_credential", "Conectá tu cuenta belo (header X-Belo-Api-Key).")
     try:
-        raw = await get_raw(key)
+        return await get_raw(key), subject_id_for(key), None
     except BeloAuthError:
-        return JSONResponse({"error": {"code": "unauthorized",
-                                       "message": "Tu cuenta belo no dio acceso a los datos necesarios."}},
-                            status_code=401)
+        raise _RequestError(401, "unauthorized", "Tu cuenta belo no dio acceso a los datos necesarios.")
     except BeloAPIError:
-        return JSONResponse({"error": {"code": "upstream_error",
-                                       "message": "No pudimos leer tus datos de belo en este momento."}},
-                            status_code=502)
-    return JSONResponse(build_transactions_payload(raw, subject_id_for(key)))
+        raise _RequestError(502, "upstream_error", "No pudimos leer tus datos de belo en este momento.")
+
+
+@mcp.custom_route("/api/dashboard/transactions", methods=["GET"])
+async def dashboard_transactions(request: Request) -> JSONResponse:
+    """Movimientos del usuario con la forma de mocks/mock-transactions.json."""
+    try:
+        raw, subject_id, demo_profile = await _raw_for_request(request)
+    except _RequestError as e:
+        return e.response
+    return JSONResponse(build_transactions_payload(raw, subject_id, PROFILE_NAMES.get(demo_profile or "")))
+
+
+@mcp.custom_route("/api/scoring/profile", methods=["GET"])
+async def scoring_profile(request: Request) -> JSONResponse:
+    """Score del usuario con el desglose de cada regla aplicada y la oferta preaprobada."""
+    term = request.query_params.get("term_months")
+    if term is not None and not term.isdigit():
+        return JSONResponse({"error": {"code": "invalid_term_months",
+                                       "message": "term_months debe ser un entero positivo."}}, status_code=400)
+    try:
+        raw, subject_id, demo_profile = await _raw_for_request(request)
+    except _RequestError as e:
+        return e.response
+    decision = decide(raw, subject_id, term_months=int(term) if term else None)
+    return JSONResponse(explain_decision(decision, demo=demo_profile is not None))
+
+
+@mcp.custom_route("/api/scoring/methodology", methods=["GET"])
+async def scoring_methodology(request: Request) -> JSONResponse:
+    """Reglas, umbrales y puntos de la scorecard vigente. No requiere credencial."""
+    return JSONResponse(methodology())
 
 
 @mcp.custom_route("/api/dashboard/openapi.json", methods=["GET"])
@@ -302,9 +328,10 @@ async def dashboard_openapi(request: Request) -> JSONResponse:
     return JSONResponse(openapi_spec())
 
 
+@mcp.custom_route("/api/docs", methods=["GET"])
 @mcp.custom_route("/api/dashboard/docs", methods=["GET"])
 async def dashboard_docs(request: Request) -> HTMLResponse:
-    """Swagger UI del dashboard."""
+    """Swagger UI de la API REST."""
     return HTMLResponse(swagger_html("/api/dashboard/openapi.json"))
 
 

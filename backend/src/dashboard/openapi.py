@@ -1,8 +1,8 @@
 """
-Spec OpenAPI del dashboard y página de Swagger UI.
+Spec OpenAPI de la API REST (dashboard y scoring) y página de Swagger UI.
 
-El ejemplo de la respuesta 200 se genera con el perfil demo `family`, así
-nunca queda desactualizado respecto del endpoint.
+Los ejemplos de las respuestas 200 se generan con los perfiles demo y la
+configuración vigente, así nunca quedan desactualizados respecto de los endpoints.
 """
 
 import json
@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import Any
 
 from scoring_engine import demo
+from scoring_engine.explain import explain_decision, methodology
+from scoring_engine.service import demo_decision
 
 from .transactions import build_transactions_payload
 
@@ -52,6 +54,20 @@ def openapi_spec() -> dict[str, Any]:
             "value": example_payload(),
         }
     }
+
+    profile = spec["paths"]["/api/scoring/profile"]["get"]["responses"]["200"]["content"]["application/json"]
+    profile["examples"] = {
+        "family": {
+            "summary": "Elegible con oferta (perfil demo `family`)",
+            "value": explain_decision(demo_decision("family"), demo=True),
+        },
+        "short_history": {
+            "summary": "No elegible (perfil demo `short_history`)",
+            "value": explain_decision(demo_decision("short_history"), demo=True),
+        },
+    }
+    rules = spec["paths"]["/api/scoring/methodology"]["get"]["responses"]["200"]["content"]["application/json"]
+    rules["examples"] = {"v1": {"summary": "Scorecard vigente", "value": methodology()}}
     return spec
 
 

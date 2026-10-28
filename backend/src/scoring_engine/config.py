@@ -31,6 +31,59 @@ ADJUSTMENTS = {
 }
 PARTIAL_PENALTY_FROM = D(10)
 
+# Qué mide cada feature/ajuste (para la explicación del score y /api/scoring/methodology)
+FEATURE_INFO: dict[str, dict[str, str]] = {
+    "recurring_income_ratio": {
+        "label": "Ingreso recurrente",
+        "description": "Ingreso de pagadores que depositaron en al menos 3 de los últimos 4 meses "
+                       "(señal de sueldo), sobre el ingreso total de los últimos 3 meses completos.",
+        "unit": "ratio 0-1",
+    },
+    "income_cv": {
+        "label": "Variabilidad del ingreso",
+        "description": "Coeficiente de variación del ingreso mensual (desvío / media). Menor = más estable.",
+        "unit": "ratio",
+    },
+    "net_margin": {
+        "label": "Margen neto",
+        "description": "(Ingresos − egresos) / ingresos en los meses considerados.",
+        "unit": "ratio",
+    },
+    "runway_months": {
+        "label": "Colchón de ahorro",
+        "description": "(Saldo líquido + vaults) en USD / gasto mensual promedio.",
+        "unit": "meses",
+    },
+    "history_months": {
+        "label": "Historial",
+        "description": "Meses completos con movimientos (máximo 6 en la ventana).",
+        "unit": "meses",
+    },
+    "negative_months_share": {
+        "label": "Meses en rojo",
+        "description": "Proporción de meses con más egresos que ingresos.",
+        "unit": "ratio 0-1",
+    },
+    "has_savings_goal": {
+        "label": "Meta de ahorro",
+        "description": "Tiene al menos un vault con meta (goalAmount).",
+        "unit": "bool",
+    },
+    "card_coherence": {
+        "label": "Coherencia del gasto con tarjeta",
+        "description": "Compara el gasto mensual promedio con tarjeta (USD) con el rango declarado en "
+                       "monthlyCardSpend. 'true' = dentro del rango, 'false' = fuera, 'unknown' = sin rango "
+                       "declarado, tarjetas no habilitadas o sin datos.",
+        "unit": "true | false | unknown",
+    },
+    "partial_pct": {
+        "label": "Datos incompletos",
+        "description": "Porcentaje de movimientos sin comprobante (receipt null) o sin cotización a USD. "
+                       "Esos movimientos no suman a ingresos ni egresos.",
+        "unit": "%",
+    },
+}
+
 # Explicaciones en lenguaje simple (sin datos sensibles)
 REASON_TEXT = {
     "recurring_income_ratio": "Pocos ingresos recurrentes (tipo sueldo)",
