@@ -1,22 +1,83 @@
 import { NextResponse } from 'next/server'
-import { readFileSync, existsSync } from 'fs'
-import { join } from 'path'
-import type { MockDataset, Transaction } from '@/lib/mock-data/types'
+
+type Transaction = {
+  id: string
+  type: 'credit' | 'debit'
+  category: string
+  amount: number
+  amountArs: number
+  description: string
+  createdAt: string
+  merchant?: string
+}
+
+type Account = {
+  type: string
+  currency: string
+  balance: { available: number }
+}
+
+type MockDataset = {
+  transactions: Transaction[]
+  accounts?: Account[]
+  profile?: { name: string }
+  stats?: {
+    averageMonthlyIncome: number
+    averageMonthlyExpenses: number
+  }
+}
+
+const BACKEND_API_URL = process.env.BACKEND_API_URL || 'http://localhost:8000'
 
 let cachedDataset: MockDataset | null = null
+let cacheTime: number = 0
+const CACHE_TTL = 60 * 1000
 
-function loadDataset(): MockDataset | null {
-  if (cachedDataset) return cachedDataset
-
-  const dataPath = join(process.cwd(), 'data', 'mock-transactions.json')
-  if (!existsSync(dataPath)) return null
+async function loadDataset(): Promise<MockDataset | null> {
+  if (cachedDataset && Date.now() - cacheTime < CACHE_TTL) {
+    return cachedDataset
+  }
 
   try {
-    cachedDataset = JSON.parse(readFileSync(dataPath, 'utf-8')) as MockDataset
-    return cachedDataset
-  } catch {
-    return null
+    const response = await fetch(`${BACKEND_API_URL}/api/dashboard/transactions`, {
+      next: { revalidate: 60 },
+    })
+    if (response.ok) {
+      const data = await response.json()
+      const transactions = data.transactions || []
+
+      // Calculate stats from transactions
+      const monthlyData: Record<string, { income: number; expenses: number }> = {}
+      for (const tx of transactions) {
+        const month = tx.createdAt.substring(0, 7)
+        if (!monthlyData[month]) monthlyData[month] = { income: 0, expenses: 0 }
+        if (tx.type === 'credit') {
+          monthlyData[month].income += tx.amountArs
+        } else {
+          monthlyData[month].expenses += tx.amountArs
+        }
+      }
+      const months = Object.values(monthlyData)
+      const avgIncome = months.length > 0 ? months.reduce((s, m) => s + m.income, 0) / months.length : 0
+      const avgExpenses = months.length > 0 ? months.reduce((s, m) => s + m.expenses, 0) / months.length : 0
+
+      cachedDataset = {
+        transactions,
+        accounts: data.accounts || [],
+        profile: data.profile || { name: 'Usuario' },
+        stats: {
+          averageMonthlyIncome: avgIncome,
+          averageMonthlyExpenses: avgExpenses,
+        },
+      }
+      cacheTime = Date.now()
+      return cachedDataset
+    }
+  } catch (error) {
+    console.error('[Stats API] Error fetching from backend:', error)
   }
+
+  return cachedDataset
 }
 
 function groupByMonth(transactions: Transaction[]) {
@@ -116,16 +177,24 @@ const CATEGORY_LABELS: Record<string, string> = {
 }
 
 export async function GET() {
-  const dataset = loadDataset()
+  const dataset = await loadDataset()
 
-  if (!dataset) {
+  if (!dataset || dataset.transactions.length === 0) {
     return NextResponse.json(
       { error: 'Dataset not found. Run: npm run generate-mock-data' },
       { status: 404 }
     )
   }
 
-  const { transactions, profile, accounts, stats } = dataset
+  const { transactions, profile, accounts = [], stats } = dataset
+  const safeProfile = profile || { name: 'Usuario', familyMembers: [] }
+  const safeStats = {
+    averageMonthlyIncome: stats?.averageMonthlyIncome || 0,
+    averageMonthlyExpenses: stats?.averageMonthlyExpenses || 0,
+    totalTransactions: transactions.length,
+    totalIncome: transactions.filter(t => t.type === 'credit').reduce((s, t) => s + t.amountArs, 0),
+    totalExpenses: transactions.filter(t => t.type === 'debit').reduce((s, t) => s + t.amountArs, 0),
+  }
 
   // Datos mensuales para el gráfico de barras
   const monthlyData = groupByMonth(transactions)
@@ -176,8 +245,8 @@ export async function GET() {
 
   // Insights/sugerencias
   const topExpenseCategory = categoryChart[0]
-  const avgMonthlyExpense = stats.averageMonthlyExpenses
-  const avgMonthlyIncome = stats.averageMonthlyIncome
+  const avgMonthlyExpense = safeStats.averageMonthlyExpenses
+  const avgMonthlyIncome = safeStats.averageMonthlyIncome
   const savingsRate = ((avgMonthlyIncome - avgMonthlyExpense) / avgMonthlyIncome * 100)
 
   const insights = [
@@ -199,16 +268,16 @@ export async function GET() {
 
   return NextResponse.json({
     profile: {
-      name: profile.name,
-      family: profile.familyMembers.map(m => m.name),
+      name: safeProfile.name,
+      family: (safeProfile as any).familyMembers?.map((m: any) => m.name) || [],
     },
     currentBalance,
     stats: {
-      totalTransactions: stats.totalTransactions,
-      totalIncome: stats.totalIncome,
-      totalExpenses: stats.totalExpenses,
-      avgMonthlyIncome: stats.averageMonthlyIncome,
-      avgMonthlyExpenses: stats.averageMonthlyExpenses,
+      totalTransactions: safeStats.totalTransactions,
+      totalIncome: safeStats.totalIncome,
+      totalExpenses: safeStats.totalExpenses,
+      avgMonthlyIncome: safeStats.averageMonthlyIncome,
+      avgMonthlyExpenses: safeStats.averageMonthlyExpenses,
       savingsRate: Math.round(savingsRate),
     },
     charts: {
@@ -218,10 +287,10 @@ export async function GET() {
     },
     recent,
     insights,
-    accounts: accounts.map(a => ({
-      name: a.name,
+    accounts: accounts.map((a: any) => ({
+      name: a.name || a.type || 'Cuenta',
       currency: a.currency,
-      balance: a.balance.available,
+      balance: a.balance?.available || 0,
     })),
   })
 }

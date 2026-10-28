@@ -1,37 +1,54 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { readFileSync, existsSync } from 'fs'
-import { join } from 'path'
-import type { MockDataset, Transaction } from '@/lib/mock-data/types'
 
-// Cache del dataset en memoria
+type Transaction = {
+  id: string
+  type: 'credit' | 'debit'
+  category: string
+  amount: number
+  amountArs: number
+  description: string
+  createdAt: string
+  merchant?: string
+}
+
+type MockDataset = {
+  transactions: Transaction[]
+}
+
+const BACKEND_API_URL = process.env.BACKEND_API_URL || 'http://localhost:8000'
+
 let cachedDataset: MockDataset | null = null
+let cacheTime: number = 0
+const CACHE_TTL = 60 * 1000
 
-function loadDataset(): MockDataset | null {
-  if (cachedDataset) return cachedDataset
-
-  const dataPath = join(process.cwd(), 'data', 'mock-transactions.json')
-
-  if (!existsSync(dataPath)) {
-    console.warn('Mock data not found. Run: npm run generate-mock-data')
-    return null
+async function loadDataset(): Promise<MockDataset | null> {
+  if (cachedDataset && Date.now() - cacheTime < CACHE_TTL) {
+    return cachedDataset
   }
 
   try {
-    const data = readFileSync(dataPath, 'utf-8')
-    cachedDataset = JSON.parse(data) as MockDataset
-    return cachedDataset
+    const response = await fetch(`${BACKEND_API_URL}/api/dashboard/transactions`, {
+      next: { revalidate: 60 },
+    })
+    if (response.ok) {
+      const data = await response.json()
+      cachedDataset = { transactions: data.transactions || [] }
+      cacheTime = Date.now()
+      return cachedDataset
+    }
   } catch (error) {
-    console.error('Error loading mock dataset:', error)
-    return null
+    console.error('[Transactions API] Error fetching from backend:', error)
   }
+
+  return cachedDataset
 }
 
 export async function GET(request: NextRequest) {
-  const dataset = loadDataset()
+  const dataset = await loadDataset()
 
-  if (!dataset) {
+  if (!dataset || dataset.transactions.length === 0) {
     return NextResponse.json(
-      { error: 'Dataset not found. Run: npm run generate-mock-data' },
+      { error: 'Backend no disponible. Verificá que esté corriendo en localhost:8000' },
       { status: 404 }
     )
   }

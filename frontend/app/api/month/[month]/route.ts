@@ -1,20 +1,48 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { readFileSync, existsSync } from 'fs'
-import { join } from 'path'
-import type { MockDataset, Transaction } from '@/lib/mock-data/types'
+
+// Transaction type from backend
+type Transaction = {
+  id: string
+  type: 'credit' | 'debit'
+  category: string
+  amount: number
+  amountArs: number
+  description: string
+  createdAt: string
+  merchant?: string
+}
+
+type MockDataset = {
+  transactions: Transaction[]
+}
+
+const BACKEND_API_URL = process.env.BACKEND_API_URL || 'http://localhost:8000'
 
 let cachedDataset: MockDataset | null = null
+let cacheTime: number = 0
+const CACHE_TTL = 60 * 1000 // 1 minute cache
 
-function loadDataset(): MockDataset | null {
-  if (cachedDataset) return cachedDataset
-  const dataPath = join(process.cwd(), 'data', 'mock-transactions.json')
-  if (!existsSync(dataPath)) return null
-  try {
-    cachedDataset = JSON.parse(readFileSync(dataPath, 'utf-8')) as MockDataset
+async function loadDataset(): Promise<MockDataset | null> {
+  // Return cached if fresh
+  if (cachedDataset && Date.now() - cacheTime < CACHE_TTL) {
     return cachedDataset
-  } catch {
-    return null
   }
+
+  try {
+    const response = await fetch(`${BACKEND_API_URL}/api/dashboard/transactions`, {
+      next: { revalidate: 60 },
+    })
+    if (response.ok) {
+      const data = await response.json()
+      cachedDataset = { transactions: data.transactions || [] }
+      cacheTime = Date.now()
+      return cachedDataset
+    }
+  } catch (error) {
+    console.error('[Month API] Error fetching from backend:', error)
+  }
+
+  return cachedDataset // Return stale cache if available
 }
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -164,15 +192,23 @@ export async function GET(
     return NextResponse.json({ error: 'Formato inválido. Usar yyyy-MM' }, { status: 400 })
   }
 
-  const dataset = loadDataset()
-  if (!dataset) {
-    return NextResponse.json({ error: 'Dataset no encontrado' }, { status: 404 })
+  const dataset = await loadDataset()
+  if (!dataset || dataset.transactions.length === 0) {
+    return NextResponse.json({ error: 'Dataset no encontrado. Verificá que el backend esté corriendo.' }, { status: 404 })
   }
 
-  const targetDate = new Date(month + '-01')
+  // Parse month correctly to avoid timezone issues
+  const [yearStr, monthStr] = month.split('-')
+  const year = parseInt(yearStr, 10)
+  const monthNum = parseInt(monthStr, 10) - 1 // 0-indexed
+  const targetDate = new Date(year, monthNum, 1)
   const now = new Date()
   const isFuture = targetDate > now
   const isPast = targetDate < new Date(now.getFullYear(), now.getMonth(), 1)
+
+  // Generate label correctly
+  const MONTH_NAMES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre']
+  const monthLabel = `${MONTH_NAMES[monthNum]} de ${year}`
 
   // Datos del mes (si existe)
   const monthTransactions = dataset.transactions.filter(
@@ -183,25 +219,67 @@ export async function GET(
   const averages = calculateMonthlyAverages(dataset.transactions)
 
   if (isFuture) {
-    // Proyección futura
-    const projected = projectMonth(averages, month)
+    // Proyección futura basada en promedios históricos
+    const monthsAhead = (targetDate.getFullYear() - now.getFullYear()) * 12 + (targetDate.getMonth() - now.getMonth())
+    const inflationRate = 0.04 // 4% mensual
+    const inflationFactor = Math.pow(1 + inflationRate, monthsAhead)
 
-    const totalIncome = projected?.filter(p => p.type === 'credit').reduce((sum, p) => sum + p.amount, 0) || 0
-    const totalExpenses = projected?.filter(p => p.type === 'debit').reduce((sum, p) => sum + p.amount, 0) || 0
+    // Proyectar cada categoría
+    const projected: Array<{
+      category: string
+      label: string
+      type: 'credit' | 'debit'
+      amount: number
+      isProjected: boolean
+      confidence: 'high' | 'medium' | 'low'
+    }> = []
+
+    const fixedExpenses = ['alquiler', 'expensas', 'cuota_colegio', 'debito_prepaga', 'debito_netflix', 'debito_spotify', 'debito_gimnasio', 'seguro_auto']
+    const variableExpenses = ['tarjeta_supermercado', 'tarjeta_combustible', 'luz', 'gas', 'agua', 'internet', 'telefono']
+    const incomeCategories = ['salario', 'freelance']
+
+    for (const [cat, avg] of Object.entries(averages)) {
+      if (avg <= 0) continue
+
+      const adjustedAmount = Math.round(avg * inflationFactor)
+      let confidence: 'high' | 'medium' | 'low' = 'low'
+      let type: 'credit' | 'debit' = 'debit'
+
+      if (incomeCategories.includes(cat)) {
+        type = 'credit'
+        confidence = 'high'
+      } else if (fixedExpenses.includes(cat)) {
+        confidence = 'high'
+      } else if (variableExpenses.includes(cat)) {
+        confidence = 'medium'
+      }
+
+      projected.push({
+        category: cat,
+        label: CATEGORY_LABELS[cat] || cat,
+        type,
+        amount: adjustedAmount,
+        isProjected: true,
+        confidence,
+      })
+    }
+
+    const totalIncome = projected.filter(p => p.type === 'credit').reduce((sum, p) => sum + p.amount, 0)
+    const totalExpenses = projected.filter(p => p.type === 'debit').reduce((sum, p) => sum + p.amount, 0)
 
     return NextResponse.json({
       month,
-      label: targetDate.toLocaleDateString('es-AR', { month: 'long', year: 'numeric' }),
+      label: monthLabel,
       type: 'projection',
       summary: {
         totalIncome,
         totalExpenses,
         net: totalIncome - totalExpenses,
-        transactionCount: projected?.length || 0,
+        transactionCount: projected.length,
       },
       breakdown: {
-        income: projected?.filter(p => p.type === 'credit') || [],
-        expenses: projected?.filter(p => p.type === 'debit') || [],
+        income: projected.filter(p => p.type === 'credit').sort((a, b) => b.amount - a.amount),
+        expenses: projected.filter(p => p.type === 'debit').sort((a, b) => b.amount - a.amount),
       },
       comparison: {
         vsAverage: {
@@ -209,7 +287,7 @@ export async function GET(
           expenses: 0,
         },
       },
-      note: 'Esta es una proyección basada en tu historial. Los montos reales pueden variar.',
+      note: `Proyección basada en tu historial (${Object.keys(averages).length} categorías). Inflación estimada: ${(inflationRate * 100).toFixed(0)}% mensual.`,
     })
   }
 
@@ -251,7 +329,7 @@ export async function GET(
 
   return NextResponse.json({
     month,
-    label: targetDate.toLocaleDateString('es-AR', { month: 'long', year: 'numeric' }),
+    label: monthLabel,
     type: 'historical',
     summary: {
       totalIncome,
