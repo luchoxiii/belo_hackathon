@@ -8,6 +8,10 @@
     {
       "source": "/mcp",
       "destination": "/api/index"
+    },
+    {
+      "source": "/api/dashboard/:path*",
+      "destination": "/api/index"
     }
   ]
 }

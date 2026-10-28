@@ -21,6 +21,7 @@
 | **Scoring** | Compliance solo como filtro | `pep` → revisión manual, no puntos | Uso indebido de flags |
 | **Scoring** | Oferta indicativa | `disclaimer` en cada oferta/simulación; sin tools de desembolso | Compromiso de otorgamiento |
 | **Scoring** | Montos en `Decimal` | Prohibido `float` en `belo_client`, `belo_scoring`, `scoring_engine` | Errores de redondeo con dinero |
+| **Dashboard** | REST solo lectura + CORS acotado | `GET /api/dashboard/transactions`; credencial por header; orígenes en `DASHBOARD_ALLOWED_ORIGINS`; sin alias/CVU ni claves de contraparte | Fuga de datos / acceso desde otros sitios |
 | **Datos** | Fuera de git | `data/` y `.env` en `.gitignore` | Datos financieros reales en el repo |
 | **Frontend** | Sanitización | `maxLength={500}` | Prompt injection |
 | **Frontend** | Rate limit | 2s entre mensajes | Abuso de API |

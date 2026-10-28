@@ -1,0 +1,233 @@
+{
+  "profile": {
+    "name": "Martín Rodríguez",
+    "family": [
+      {
+        "name": "Luciana",
+        "relationship": "spouse"
+      },
+      {
+        "name": "Valentina",
+        "relationship": "child"
+      }
+    ],
+    "employment": {
+      "type": "empleado",
+      "company": "Tech Solutions SA",
+      "position": "Senior Developer",
+      "monthlySalary": 2800000,
+      "payDay": 5
+    },
+    "location": {
+      "city": "Buenos Aires",
+      "province": "CABA"
+    }
+  },
+  "dateRange": {
+    "from": "2024-10-01",
+    "to": "2026-10-28"
+  },
+  "totals": {
+    "transactions": 999,
+    "income": 88107385,
+    "expenses": 101272640,
+    "net": -13165255
+  },
+  "averages": {
+    "monthlyIncome": 3671141,
+    "monthlyExpenses": 4219693,
+    "monthlyNet": -548552
+  },
+  "breakdown": {
+    "expensesByCategory": {
+      "debito_gimnasio": 1625000,
+      "seguro_auto": 2125000,
+      "tarjeta_supermercado": 11702292,
+      "peaje": 268934,
+      "plazo_fijo_constitucion": 6473664,
+      "tarjeta_combustible": 4539057,
+      "compra_crypto": 10493586,
+      "telefono": 700000,
+      "actividad_extracurricular": 1615000,
+      "internet": 875000,
+      "alquiler": 16250000,
+      "cuota_colegio": 6720000,
+      "debito_prepaga": 10500000,
+      "tarjeta_restaurante": 5626656,
+      "luz": 1161000,
+      "tarjeta_indumentaria": 2433170,
+      "pediatra": 387267,
+      "expensas": 4772942,
+      "debito_netflix": 200000,
+      "gas": 925000,
+      "agua": 300000,
+      "debito_spotify": 137500,
+      "debito_streaming": 150000,
+      "tarjeta_farmacia": 2057616,
+      "uber_taxi": 227091,
+      "abl": 420000,
+      "medico": 256899,
+      "impuesto_ganancias": 2240000,
+      "mantenimiento_auto": 1377449,
+      "matricula_escolar": 960000,
+      "tarjeta_tecnologia": 3613833,
+      "utiles_escolares": 138684
+    },
+    "incomeByCategory": {
+      "salario": 70000000,
+      "plazo_fijo_vencimiento": 6982486,
+      "interes_plazo_fijo": 508822,
+      "aguinaldo": 5600000,
+      "freelance": 3848717,
+      "venta_crypto": 1029000,
+      "reembolso": 138360
+    },
+    "monthlyBreakdown": {
+      "2024-10": {
+        "income": 2800000,
+        "expenses": 4382016,
+        "net": -1582016
+      },
+      "2024-11": {
+        "income": 3874296,
+        "expenses": 3494187,
+        "net": 380109
+      },
+      "2024-12": {
+        "income": 4200000,
+        "expenses": 3884029,
+        "net": 315971
+      },
+      "2025-01": {
+        "income": 3487497,
+        "expenses": 3407380,
+        "net": 80117
+      },
+      "2025-02": {
+        "income": 3184825,
+        "expenses": 3250211,
+        "net": -65386
+      },
+      "2025-03": {
+        "income": 3422281,
+        "expenses": 3548979,
+        "net": -126698
+      },
+      "2025-04": {
+        "income": 3291955,
+        "expenses": 4947146,
+        "net": -1655191
+      },
+      "2025-05": {
+        "income": 3834200,
+        "expenses": 4024228,
+        "net": -190028
+      },
+      "2025-06": {
+        "income": 4427850,
+        "expenses": 4438182,
+        "net": -10332
+      },
+      "2025-07": {
+        "income": 2800000,
+        "expenses": 5046968,
+        "net": -2246968
+      },
+      "2025-08": {
+        "income": 4184604,
+        "expenses": 3350197,
+        "net": 834407
+      },
+      "2025-09": {
+        "income": 3185570,
+        "expenses": 4811005,
+        "net": -1625435
+      },
+      "2025-10": {
+        "income": 3475861,
+        "expenses": 4572869,
+        "net": -1097008
+      },
+      "2025-11": {
+        "income": 4595697,
+        "expenses": 3511330,
+        "net": 1084367
+      },
+      "2025-12": {
+        "income": 4426800,
+        "expenses": 3330679,
+        "net": 1096121
+      },
+      "2026-01": {
+        "income": 3187262,
+        "expenses": 5268303,
+        "net": -2081041
+      },
+      "2026-02": {
+        "income": 3747832,
+        "expenses": 4160255,
+        "net": -412423
+      },
+      "2026-03": {
+        "income": 2800000,
+        "expenses": 3533256,
+        "net": -733256
+      },
+      "2026-04": {
+        "income": 3085600,
+        "expenses": 4057052,
+        "net": -971452
+      },
+      "2026-05": {
+        "income": 3607171,
+        "expenses": 3189131,
+        "net": 418040
+      },
+      "2026-06": {
+        "income": 4266762,
+        "expenses": 4264526,
+        "net": 2236
+      },
+      "2026-07": {
+        "income": 2800000,
+        "expenses": 4264389,
+        "net": -1464389
+      },
+      "2026-08": {
+        "income": 3821322,
+        "expenses": 4030060,
+        "net": -208738
+      },
+      "2026-09": {
+        "income": 2800000,
+        "expenses": 4192957,
+        "net": -1392957
+      },
+      "2026-10": {
+        "income": 2800000,
+        "expenses": 4313305,
+        "net": -1513305
+      }
+    }
+  },
+  "accounts": [
+    {
+      "name": "Cuenta Belo",
+      "type": "checking",
+      "currency": "ARS",
+      "balance": 1850000
+    },
+    {
+      "name": "Wallet BTC",
+      "type": "crypto",
+      "currency": "BTC",
+      "balance": 0.0125
+    },
+    {
+      "name": "Wallet USDT",
+      "type": "crypto",
+      "currency": "USDT",
+      "balance": 2450
+    }
+  ]
+}

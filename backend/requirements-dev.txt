@@ -2,3 +2,5 @@
 pytest
 pytest-asyncio
 respx
+jsonschema
+openapi-spec-validator

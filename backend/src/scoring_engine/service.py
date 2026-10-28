@@ -33,20 +33,24 @@ async def _fetch_for_key(api_key: str) -> RawData:
         return await fetch_raw(WINDOW_DAYS, client=client)
 
 
+async def get_raw(api_key: str, fetcher: RawFetcher = _fetch_for_key) -> RawData:
+    """Cachea los datos crudos por titular (vaults va a 1 req/s y Vercel corta a los 30 s)."""
+    subject_id = subject_id_for(api_key)
+    cached = _cache.get(subject_id)
+    if cached and time.monotonic() - cached[0] < CACHE_TTL_SECONDS:
+        return cached[1]
+    raw = await fetcher(api_key)
+    _cache[subject_id] = (time.monotonic(), raw)
+    return raw
+
+
 async def get_decision(
     api_key: str,
     term_months: int | None = None,
     fetcher: RawFetcher = _fetch_for_key,
 ) -> CreditDecision:
-    """Cachea los datos crudos por titular (vaults va a 1 req/s y Vercel corta a los 30 s)."""
-    subject_id = subject_id_for(api_key)
-    cached = _cache.get(subject_id)
-    if cached and time.monotonic() - cached[0] < CACHE_TTL_SECONDS:
-        raw = cached[1]
-    else:
-        raw = await fetcher(api_key)
-        _cache[subject_id] = (time.monotonic(), raw)
-    return decide(raw, subject_id, term_months=term_months)
+    raw = await get_raw(api_key, fetcher)
+    return decide(raw, subject_id_for(api_key), term_months=term_months)
 
 
 def demo_decision(profile: str, term_months: int | None = None) -> CreditDecision:
