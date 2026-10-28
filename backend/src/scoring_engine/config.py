@@ -61,7 +61,7 @@ FEATURE_INFO: dict[str, dict[str, str]] = {
     },
     "history_months": {
         "label": "Historial",
-        "description": "Meses completos con movimientos (máximo 6 en la ventana).",
+        "description": "Meses completos con movimientos (máximo 24 en la ventana).",
         "unit": "meses",
     },
     "negative_months_share": {
@@ -142,7 +142,7 @@ BANDS: list[tuple[int, str]] = [(720, "A"), (640, "B"), (560, "C"), (0, "D")]
 # Gates de elegibilidad
 MAX_PARTIAL_PCT = D(30)
 MIN_HISTORY_MONTHS = 3
-FEATURE_WINDOW_MONTHS = 6
+FEATURE_WINDOW_MONTHS = 24  # 2 años de historial para mejor evaluación
 
 # Oferta (placeholders): múltiplo de la mediana de ingreso, plazo máximo, TNA en USD
 OFFER_BY_BAND: dict[str, dict[str, Decimal | int]] = {

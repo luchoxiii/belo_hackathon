@@ -13,7 +13,7 @@ from typing import Any
 
 from belo_scoring.models import RawData
 
-WINDOW_DAYS = 180
+WINDOW_DAYS = 730  # 2 años de historial
 
 
 def _months_before(now: datetime, count: int) -> list[str]:
@@ -99,8 +99,11 @@ def short_history(now: datetime) -> RawData:
 # --- Perfil "family": hogar en ARS con gastos variados, para el dashboard ---
 
 def _ars_rate(day: date) -> Decimal:
-    """Cotización sintética ARS por USD: sube ~0,7 por día desde 1380 (2026-01-01)."""
-    return (Decimal(1380) + Decimal("0.7") * (day - date(2026, 1, 1)).days).quantize(Decimal("0.01"))
+    """Cotización sintética ARS por USD: sube ~0,5 por día desde 1000 (2024-10-01)."""
+    base_date = date(2024, 10, 1)
+    base_rate = Decimal(1000)
+    daily_increase = Decimal("0.5")
+    return (base_rate + daily_increase * (day - base_date).days).quantize(Decimal("0.01"))
 
 
 def _fx_table(now: datetime) -> dict[str, dict[str, str]]:
@@ -111,17 +114,21 @@ def _fx_table(now: datetime) -> dict[str, dict[str, str]]:
     }}
 
 
-# (día, monto base ARS, destinatario, tipo de cuenta) de los débitos fijos por transferencia
+# Inflación mensual para ajustar montos (realista para Argentina ~1.5-2% mensual)
+MONTHLY_INFLATION = Decimal("0.017")  # 1.7% mensual
+
+# (día, monto base ARS en mes 0, destinatario, tipo de cuenta, ajusta por inflación, spread)
+# spread: variación aleatoria adicional (ej: 0.05 = ±5%)
 FAMILY_FIXED = [
-    ("07", 420000, "OSDE", "CVU"),
-    ("08", 280000, "Colegio San Martín", "CBU"),
-    ("10", 650000, "Inmobiliaria Palermo", "ALIAS"),
-    ("10", 185000, "Consorcio Av. Santa Fe 1234", "CVU"),
-    ("12", 35000, "Fibertel", "CVU"),
-    ("12", 28000, "Personal", "CVU"),
-    ("15", 45000, "Edenor", "CVU"),
-    ("16", 30000, "Metrogas", "CVU"),
-    ("17", 12000, "AySA", "CVU"),
+    ("07", 420000, "OSDE", "CVU", True, 0.02),           # Prepaga sube con inflación
+    ("08", 280000, "Colegio San Martín", "CBU", True, 0.0),  # Cuota fija por cuatrimestre
+    ("10", 650000, "Inmobiliaria Palermo", "ALIAS", True, 0.0),  # Alquiler ajusta cada 3-6 meses
+    ("10", 185000, "Consorcio Av. Santa Fe 1234", "CVU", True, 0.08),  # Expensas varían más
+    ("12", 35000, "Fibertel", "CVU", True, 0.03),        # Servicios suben gradualmente
+    ("12", 28000, "Personal", "CVU", True, 0.05),
+    ("15", 45000, "Edenor", "CVU", True, 0.15),          # Luz varía mucho por consumo
+    ("16", 30000, "Metrogas", "CVU", True, 0.20),        # Gas varía por estación
+    ("17", 12000, "AySA", "CVU", True, 0.05),
 ]
 
 # (comercio, rango ARS, veces por mes) de los consumos con tarjeta
@@ -135,10 +142,10 @@ FAMILY_CARD = [
 
 
 def family(now: datetime) -> RawData:
-    """Hogar con sueldo en ARS, servicios, alquiler, tarjeta y compra mensual de USDT."""
+    """Hogar con sueldo en ARS, servicios, alquiler, tarjeta y compra mensual de USDT. 2 años de historial."""
     rng = random.Random(42)
     current = now.strftime("%Y-%m")
-    months = _months_before(now, 5) + [current]
+    months = _months_before(now, 23) + [current]  # 24 meses totales
     txs: list[dict[str, Any]] = []
     card_txs: list[dict[str, Any]] = []
 
@@ -154,14 +161,22 @@ def family(now: datetime) -> RawData:
                            _receipt({"name": "Tech Solutions SA", "bank": "Banco Galicia", "belotag": None,
                                      "account": "tech.solutions.sueldos", "accountType": "ALIAS"}),
                            currency="ARGt"))
-        if i in (1, 3) and happened(m, "20"):
+        # Ingreso freelance cada 2-3 meses (aproximadamente)
+        if i % 3 in (1, 2) and happened(m, "20"):
             txs.append(_tx("deposit", m, "20", ars(450000, 0.3),
                            _receipt(_counterparty("CVU", "freelance estudio creativo")), currency="ARGt"))
 
-        for day, base, name, account_type in FAMILY_FIXED:
+        for day, base, name, account_type, adjusts_inflation, spread in FAMILY_FIXED:
             if not happened(m, day):
                 continue
-            amount = ars(base, 0.0 if name in ("Inmobiliaria Palermo", "OSDE", "Colegio San Martín") else 0.15)
+            # Aplicar inflación acumulada desde el mes 0
+            if adjusts_inflation:
+                inflation_factor = (1 + float(MONTHLY_INFLATION)) ** i
+                adjusted_base = int(base * inflation_factor)
+            else:
+                adjusted_base = base
+            # Aplicar variación aleatoria
+            amount = ars(adjusted_base, spread)
             cp = {"name": name, "bank": None, "belotag": None,
                   "account": name.lower().replace(" ", "."), "accountType": account_type}
             txs.append(_tx("transfer", m, day, amount,
@@ -204,13 +219,13 @@ def family(now: datetime) -> RawData:
         card_application={"status": "approved", "acceptedTerms": True},
         balances=[
             {"currencyCode": "ARGt", "name": "Argentine Peso Token", "type": "fiat_token", "decimals": 2,
-             "available": "1850000.00", "earned": {"total": "0", "today": "0", "month": "0"}},
-            usdt_balance("2450.000000"),
+             "available": "2500000.00", "earned": {"total": "0", "today": "0", "month": "0"}},
+            usdt_balance("4500.000000"),
             {"currencyCode": "BTC", "name": "Bitcoin", "type": "crypto", "decimals": 8,
-             "available": "0.01250000", "earned": {"total": "0", "today": "0", "month": "0"}},
+             "available": "0.02500000", "earned": {"total": "0", "today": "0", "month": "0"}},
         ],
-        vaults=[{"id": "demo-vault-vacaciones", "currencyCode": "USDT", "balance": "800.00", "isYieldActive": True,
-                 "rate": "4.00%", "details": {"name": "Vacaciones", "goalAmount": "3000"}}],
+        vaults=[{"id": "demo-vault-vacaciones", "currencyCode": "USDT", "balance": "2500.00", "isYieldActive": True,
+                 "rate": "4.00%", "details": {"name": "Vacaciones", "goalAmount": "5000"}}],
         fx_rates=_fx_table(now),
         declared_brackets={"annual_revenue": "from_20000_to_50000", "monthly_card_spend": "from_0_to_500"},
     )
