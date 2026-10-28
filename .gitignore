@@ -3,3 +3,6 @@
 !.env.example
 venv/
 __pycache__/
+
+# Datos financieros reales del scoring
+data/
