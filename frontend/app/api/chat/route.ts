@@ -111,6 +111,59 @@ async function loadMockData(): Promise<MockData> {
   }
 }
 
+// Scoring data types
+type ScoringProfile = {
+  demo: boolean
+  eligible: boolean
+  score?: number
+  band?: string
+  reasons?: string[]
+  has_preapproved_offer?: boolean
+}
+
+type LoanOffer = {
+  band: string
+  currency: string
+  amount_max_usd: string
+  term_months: number
+  max_term_months: number
+  min_term_months: number
+  tna: string
+  tea: string
+  installment_usd: string
+  max_installment_usd: string
+  total_payable_usd: string
+  valid_until: string
+  disclaimer: string
+}
+
+type ScoringData = {
+  profile: ScoringProfile
+  offer: {
+    has_offer: boolean
+    offer?: LoanOffer
+    reasons?: string[]
+    demo: boolean
+  }
+}
+
+// USD to ARS conversion rate (approximate, in real app would be fetched)
+const USD_TO_ARS = 1200
+
+async function loadScoringData(): Promise<ScoringData | null> {
+  try {
+    const response = await fetch(`${BACKEND_API_URL}/api/scoring/profile`, {
+      next: { revalidate: 60 },
+    })
+    if (response.ok) {
+      return await response.json()
+    }
+  } catch {
+    // Backend not available
+  }
+  return null
+}
+
 // Get balance from accounts (realistic) instead of summing all transactions
 function getAccountBalance(accounts: MockData['accounts']): number {
   if (!accounts || accounts.length === 0) return 0
@@ -395,8 +448,11 @@ export async function POST(req: Request) {
   const { events: userEvents, settings } = parsed.data
   const today = todayInArgentina()
 
-  // Load mock data (transactions + accounts)
-  const mockData = await loadMockData()
+  // Load mock data (transactions + accounts) and scoring data
+  const [mockData, scoringData] = await Promise.all([
+    loadMockData(),
+    loadScoringData(),
+  ])
   const transactions = mockData.transactions
 
   // If user has no events, derive them from transaction history
@@ -437,12 +493,13 @@ Sos un asesor financiero que entiende la realidad argentina:
 3. **Crédito inteligente > esperar**: Un préstamo de Belo te permite comprar HOY a precio de HOY, mantener tu colchón de seguridad, y pagar en cuotas que se licuan con la inflación.
 
 PRODUCTOS DE BELO QUE PODÉS OFRECER:
-- **Préstamo personal Belo**: Hasta $5.000.000, aprobación instantánea desde la app, cuotas fijas en pesos que se licuan con la inflación. Ideal para compras grandes.
+- **Préstamo personal Belo**: Aprobación instantánea desde la app, cuotas fijas en pesos que se licuan con la inflación. El monto máximo depende del scoring del usuario (usá "consultarOfertaCredito" para ver su oferta real).
 - **Adelanto de sueldo**: Para gastos urgentes menores, hasta el 50% del sueldo.
 
 CÓMO TRABAJÁS:
 - Usá SIEMPRE las herramientas para cualquier pregunta sobre finanzas futuras.
 - "evaluarGasto" para preguntas tipo "¿puedo comprar X en tal mes?"
+- "consultarOfertaCredito" SIEMPRE que vayas a ofrecer un préstamo, para dar montos y cuotas REALES basados en el scoring del usuario.
 - Si el usuario no da monto o mes, pedilo.
 
 CÓMO INTERPRETAR "evaluarGasto":
@@ -508,6 +565,16 @@ Te propongo un plan:
 3. **Esperar al aguinaldo**: En [mes con aguinaldo] tu situación mejora bastante
 
 ¿Arrancamos un plan de ahorro?"
+
+=== MUY IMPORTANTE: ANTES DE OFRECER CRÉDITO ===
+SIEMPRE llamá a "consultarOfertaCredito" para obtener los montos y tasas REALES del usuario.
+La herramienta devuelve:
+- montoMaximoARS: El monto máximo que puede pedir
+- cuotaMensualARS: La cuota mensual para el plazo dado
+- tasaNominalAnual y tasaEfectivaAnual: Las tasas reales
+- plazoMinimo y plazoMaximo: Plazos disponibles
+
+Usá ESTOS DATOS REALES al responder, no inventes montos.
 
 === ARGUMENTOS DE VENTA DEL CRÉDITO BELO ===
 Usá estos argumentos cuando ofrezcas el préstamo:
@@ -683,6 +750,72 @@ Usá estos argumentos cuando ofrezcas el préstamo:
               diasHastaProximo: g.daysUntilNext,
             })),
             recomendacion: 'Te sugiero cargar estos gastos como eventos financieros para que las proyecciones sean más precisas. ¿Querés que te ayude a agregarlos?',
+          }
+        },
+      }),
+      consultarOfertaCredito: tool({
+        description:
+          'Consulta la oferta de préstamo preaprobada del usuario basada en su scoring crediticio. Usá esta herramienta SIEMPRE antes de ofrecer un crédito para dar montos y tasas reales.',
+        inputSchema: z.object({
+          plazoMeses: z.number().int().min(3).max(12).optional().describe('Plazo deseado en meses (3-12). Si no se especifica, usa el plazo máximo disponible.'),
+        }),
+        execute: async ({ plazoMeses }) => {
+          if (!scoringData) {
+            return {
+              disponible: false,
+              mensaje: 'No pudimos consultar tu scoring crediticio en este momento. Probá de nuevo en unos minutos.',
+            }
+          }
+
+          const { profile, offer } = scoringData
+
+          if (!profile.eligible) {
+            return {
+              disponible: false,
+              elegible: false,
+              motivos: profile.reasons || ['No cumple los requisitos mínimos'],
+              mensaje: 'Actualmente no calificás para un préstamo preaprobado.',
+            }
+          }
+
+          if (!offer.has_offer || !offer.offer) {
+            return {
+              disponible: false,
+              elegible: true,
+              score: profile.score,
+              banda: profile.band,
+              motivos: offer.reasons || ['Capacidad de pago insuficiente'],
+              mensaje: 'Aunque tu perfil es elegible, no hay una oferta disponible en este momento.',
+            }
+          }
+
+          const o = offer.offer
+          const montoMaxUSD = parseFloat(o.amount_max_usd)
+          const cuotaUSD = parseFloat(o.installment_usd)
+          const montoMaxARS = Math.round(montoMaxUSD * USD_TO_ARS)
+          const cuotaARS = Math.round(cuotaUSD * USD_TO_ARS)
+
+          return {
+            disponible: true,
+            elegible: true,
+            score: profile.score,
+            banda: profile.band,
+            oferta: {
+              montoMaximoUSD: montoMaxUSD,
+              montoMaximoARS: montoMaxARS,
+              plazoMeses: o.term_months,
+              plazoMinimo: o.min_term_months,
+              plazoMaximo: o.max_term_months,
+              tasaNominalAnual: `${(parseFloat(o.tna) * 100).toFixed(1)}%`,
+              tasaEfectivaAnual: `${(parseFloat(o.tea) * 100).toFixed(1)}%`,
+              cuotaMensualUSD: cuotaUSD,
+              cuotaMensualARS: cuotaARS,
+              totalAPagarUSD: parseFloat(o.total_payable_usd),
+              totalAPagarARS: Math.round(parseFloat(o.total_payable_usd) * USD_TO_ARS),
+              validoHasta: o.valid_until,
+            },
+            disclaimer: o.disclaimer,
+            esDemo: offer.demo,
           }
         },
       }),
