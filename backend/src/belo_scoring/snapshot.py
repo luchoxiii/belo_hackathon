@@ -2,12 +2,12 @@
 
 from decimal import Decimal
 
-from .fx import FxProvider, StubFxProvider, normalize_currency, to_decimal, to_usd
+from .fx import FxProvider, fx_for_rates, normalize_currency, to_decimal, to_usd
 from .models import BalanceSnapshot, DeclaredProfile, RawData, SavingsSnapshot, VaultSnapshot
 
 
 def build_savings_snapshot(raw: RawData, fx: FxProvider | None = None) -> SavingsSnapshot:
-    fx = fx or StubFxProvider()
+    fx = fx or fx_for_rates(raw.fx_rates)
     at = raw.fetched_at
     unconverted: set[str] = set()
 

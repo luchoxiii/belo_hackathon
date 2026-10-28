@@ -1,8 +1,8 @@
-# 🛡️ Guardrails — Savings Wallet MCP
+# 🛡️ Guardrails — Savings Wallet MCP + Scoring crediticio
 
 ## Principio Rector
 
-> **El MCP solo hace proyecciones y cálculos. No mueve fondos ni accede a datos bancarios sensibles.**
+> **El MCP solo lee, calcula y simula. No mueve fondos, no otorga ni desembolsa préstamos y nunca expone datos bancarios sensibles al LLM.**
 
 ---
 
@@ -10,15 +10,22 @@
 
 | Capa | Guardrail | Implementación | Riesgo Mitigado |
 | :--- | :--- | :--- | :--- |
-| **Backend** | Sin datos sensibles | Solo saldo, tasa, gastos (env vars) | Fuga de CBU/CVU |
-| **Backend** | Validación de inputs | `months` 1-60, `target_amount` > 0 | Cálculos absurdos |
+| **Backend** | Validación de inputs | `months` 1-60, `target_amount` > 0, monto/plazo dentro de la oferta | Cálculos absurdos |
 | **Backend** | Promos whitelist | Solo IDs conocidos | Alucinaciones del LLM |
 | **Backend** | Sin escritura | Solo lectura y cálculo | Movimiento no autorizado |
-| **Backend** | Sin cripto/noticias | Eliminado del alcance | Superficie de ataque reducida |
+| **belo API** | Solo GET + whitelist | `belo_client.ENDPOINTS`; test AST que prohíbe `post/put/patch/delete` | Crear transacciones (los "preview" crean pendientes en el ledger) |
+| **belo API** | Credencial por usuario | Header `X-Belo-Api-Key` de la conexión MCP, **nunca** argumento de tool | Credencial expuesta al LLM |
+| **belo API** | Key fuera de logs/errores | Mensajes de `BeloAPIError` sin la key; decisiones con `subject_id` = sha256 | Fuga de credenciales |
+| **Scoring** | Salidas mínimas al LLM | `scoring_engine.service.public_*`: score, banda, razones y oferta; sin contrapartes, CVU ni direcciones | Fuga de datos personales |
+| **Scoring** | Sin `civilStatus` | No está en `DeclaredProfile` | Discriminación |
+| **Scoring** | Compliance solo como filtro | `pep` → revisión manual, no puntos | Uso indebido de flags |
+| **Scoring** | Oferta indicativa | `disclaimer` en cada oferta/simulación; sin tools de desembolso | Compromiso de otorgamiento |
+| **Scoring** | Montos en `Decimal` | Prohibido `float` en `belo_client`, `belo_scoring`, `scoring_engine` | Errores de redondeo con dinero |
+| **Datos** | Fuera de git | `data/` y `.env` en `.gitignore` | Datos financieros reales en el repo |
 | **Frontend** | Sanitización | `maxLength={500}` | Prompt injection |
 | **Frontend** | Rate limit | 2s entre mensajes | Abuso de API |
 | **Frontend** | Secretos | `MCP_SERVER_URL` solo en `route.ts` | Fuga de credenciales |
-| **v0** | Tools read-only | Solo 4 tools de consulta | Agente mueve fondos |
+| **v0** | Tools read-only | 7 tools de consulta/simulación | Agente mueve fondos |
 
 ---
 
@@ -26,22 +33,24 @@
 
 | Anti-Patrón | Por qué |
 | :--- | :--- |
-| `PRIVATE_KEY` | Ya no aplica (no hay cripto) |
-| `send_transaction()` | No existe ni se implementa |
-| Consultar CoinGecko/CoinDesk | Eliminado del alcance |
-| Hardcodear CBU/CVU | Nunca en código ni variables |
-| Exponer saldo real en logs | Fuga de datos personales |
+| Llamar `POST /swaps/preview`, `/transfers/preview`, `/pix/payouts/preview` | Crean una transacción pendiente aunque se llamen "preview" |
+| Tool que reciba la API key como argumento | La credencial pasaría por el LLM |
+| Devolver `counterparty_key`, CVU, alias o direcciones en una tool | Datos bancarios sensibles |
+| `BELO_ALLOW_SERVER_CREDENTIAL=true` en producción | Todos los usuarios verían la cuenta del servidor |
+| `BELO_DEMO_PROFILE` en producción | Todos verían una oferta de un perfil sintético (marcada `demo: true`) |
+| Usar `civilStatus` o compliance flags como puntos del score | Discriminación / uso indebido |
+| Hardcodear CBU/CVU o la API key | Nunca en código ni variables versionadas |
 
 ---
 
-## 📊 Flujo de un Request
+## 📊 Flujo de un Request de Crédito
 
 ```
-Usuario → Frontend (sanitiza, rate limit)
-        → MCP Server (valida inputs)
-        → Cálculo local (inflación proyectada)
-        → Respuesta (sin datos sensibles)
-        → v0 (solo tools read-only)
+Usuario → cliente MCP (header X-Belo-Api-Key)
+        → MCP Server (lee la credencial del header)
+        → belo API (solo GET, caché 10 min por titular)
+        → categorización + features + scorecard (lógica pura)
+        → Respuesta: score, banda, razones, oferta simulada
         → Usuario
 ```
 
@@ -49,9 +58,9 @@ Usuario → Frontend (sanitiza, rate limit)
 
 ## ✅ Checklist Pre-Deploy
 
-- [ ] `grep -r "CBU\|CVU\|PRIVATE_KEY" .` → sin resultados
+- [ ] `grep -r "CBU\|CVU\|PRIVATE_KEY" backend/src` → sin valores hardcodeados
 - [ ] `vercel.json` tiene `maxDuration: 30`
-- [ ] Env vars de Vercel: `SALDO_INICIAL`, `TASA_WALLET_ANUAL`, `GASTOS_MENSUALES`
+- [ ] Env vars de Vercel: `BELO_BASE_URL`, `LOAN_MAX_USD`; **sin** `BELO_ALLOW_SERVER_CREDENTIAL=true` ni `BELO_DEMO_PROFILE`
+- [ ] `pytest` pasa (incluye el test de solo-GET y el de salidas sin datos sensibles)
+- [ ] MCP Inspector muestra solo las 7 tools de lectura/simulación
 - [ ] Frontend: `MCP_SERVER_URL` solo en `route.ts`
-- [ ] MCP Inspector muestra solo 4 tools
-- [ ] No hay referencias a CoinGecko ni CoinDesk en el código

@@ -15,7 +15,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
-from .fx import FxProvider, StubFxProvider, to_decimal, to_usd
+from .fx import FxProvider, fx_for_rates, to_decimal, to_usd
 from .models import Category, CategorizedMovement, RawData
 
 BANK_RAILS = {"CVU", "CBU", "ALIAS"}
@@ -206,7 +206,7 @@ def categorize_card_transaction(tx: dict[str, Any], fx: FxProvider) -> Categoriz
 
 def categorize(raw: RawData, fx: FxProvider | None = None) -> list[CategorizedMovement]:
     """Clasifica movimientos de ledger y de tarjeta. Función pura, sin I/O."""
-    fx = fx or StubFxProvider()
+    fx = fx or fx_for_rates(raw.fx_rates)
     own = self_accounts(raw.contacts)
     movements = [categorize_transaction(tx, own, fx) for tx in raw.transactions]
     for card_txs in raw.card_transactions.values():

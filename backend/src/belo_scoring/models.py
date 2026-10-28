@@ -30,6 +30,8 @@ class RawData(BaseModel):
     balances: list[dict[str, Any]] = Field(default_factory=list)
     vaults: list[dict[str, Any]] = Field(default_factory=list)
     vault_details: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    # Cotizaciones diarias `{moneda: {"YYYY-MM-DD": rate}}` (unidades de moneda por 1 USD)
+    fx_rates: dict[str, dict[str, str]] = Field(default_factory=dict)
     # Rangos declarados: la API no los devuelve, vienen de variables de entorno
     declared_brackets: dict[str, str | None] = Field(default_factory=dict)
     unavailable: dict[str, str] = Field(default_factory=dict)

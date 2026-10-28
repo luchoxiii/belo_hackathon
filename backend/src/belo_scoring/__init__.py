@@ -8,7 +8,7 @@ más adelante, cuando el motor de scoring esté estable.
 from .aggregate import aggregate_monthly
 from .categorize import categorize
 from .fetch import fetch_raw, load_raw, save_raw
-from .fx import FxProvider, StubFxProvider
+from .fx import FxProvider, StubFxProvider, TableFxProvider, fx_for_rates
 from .models import (
     CategorizedMovement,
     Category,
@@ -28,11 +28,13 @@ __all__ = [
     "RawData",
     "SavingsSnapshot",
     "StubFxProvider",
+    "TableFxProvider",
     "aggregate_monthly",
     "build_declared_profile",
     "build_savings_snapshot",
     "categorize",
     "fetch_raw",
+    "fx_for_rates",
     "load_raw",
     "save_raw",
 ]

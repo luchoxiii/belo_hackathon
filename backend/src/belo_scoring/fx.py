@@ -4,7 +4,7 @@ Normalización de montos a USD.
 Orden: stablecoins 1:1 -> `receipt.conversion` del movimiento -> FxProvider.
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Any, Protocol
 
@@ -21,12 +21,44 @@ class FxProvider(Protocol):
 
 class StubFxProvider:
     """
-    PENDIENTE: la API de belo no expone cotizaciones históricas.
-    Hasta definir la fuente, los montos en ARS/BRL quedan sin normalizar.
+    Sin cotizaciones: los montos que no sean USD/stablecoins quedan sin normalizar.
+    La API de belo no expone cotizaciones históricas; ver `fx_source`.
     """
 
     def get_rate(self, currency: str, at: datetime) -> Decimal | None:
         return None
+
+
+class TableFxProvider:
+    """
+    Cotizaciones diarias ya descargadas: `{moneda: {"YYYY-MM-DD": "1450.25"}}`.
+
+    Si el día no tiene cotización (fin de semana, feriado), usa la última
+    anterior dentro de `max_gap_days`.
+    """
+
+    def __init__(self, rates: dict[str, dict[str, str]], max_gap_days: int = 7):
+        self._rates = {
+            normalize_currency(currency): {day: Decimal(value) for day, value in by_day.items()}
+            for currency, by_day in rates.items()
+        }
+        self._max_gap_days = max_gap_days
+
+    def get_rate(self, currency: str, at: datetime) -> Decimal | None:
+        by_day = self._rates.get(normalize_currency(currency))
+        if not by_day:
+            return None
+        day = at.date()
+        for _ in range(self._max_gap_days + 1):
+            rate = by_day.get(day.isoformat())
+            if rate:
+                return rate
+            day -= timedelta(days=1)
+        return None
+
+
+def fx_for_rates(rates: dict[str, dict[str, str]]) -> FxProvider:
+    return TableFxProvider(rates) if rates else StubFxProvider()
 
 
 def normalize_currency(currency: str | None) -> str | None:

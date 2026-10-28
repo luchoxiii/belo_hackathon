@@ -7,14 +7,17 @@ desde disco sin volver a pegarle a la API.
 
 import json
 import os
-from collections.abc import Awaitable
-from datetime import datetime, timedelta, timezone
+from collections.abc import Awaitable, Callable
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, TypeVar
+
+import httpx
 
 from belo_client import BeloAPIError, BeloAuthError, BeloClient
 
 from .categorize import parse_datetime
+from .fx_source import fetch_ars_rates
 from .models import RawData
 
 T = TypeVar("T")
@@ -24,8 +27,10 @@ OPTIONAL_STATUS = {403, 404}
 
 RAW_FILES = [
     "transactions", "contacts", "cards", "card_transactions", "card_application",
-    "balances", "vaults", "vault_details",
+    "balances", "vaults", "vault_details", "fx_rates",
 ]
+
+FxFetcher = Callable[[date, date], Awaitable[dict[str, str]]]
 
 
 async def _optional(raw: RawData, name: str, call: Awaitable[T], default: T) -> T:
@@ -40,7 +45,11 @@ async def _optional(raw: RawData, name: str, call: Awaitable[T], default: T) -> 
         raise
 
 
-async def fetch_raw(window_days: int = 180, client: BeloClient | None = None) -> RawData:
+async def fetch_raw(
+    window_days: int = 180,
+    client: BeloClient | None = None,
+    fx_fetcher: FxFetcher | None = fetch_ars_rates,
+) -> RawData:
     """Llama a todos los endpoints (solo GET) y devuelve las respuestas crudas."""
     now = datetime.now(timezone.utc)
     raw = RawData(
@@ -89,6 +98,15 @@ async def fetch_raw(window_days: int = 180, client: BeloClient | None = None) ->
     finally:
         if owns_client:
             await client.aclose()
+
+    # Cotizaciones ARS/USD de la ventana (+7 días para cubrir fines de semana)
+    if fx_fetcher is not None:
+        try:
+            ars = await fx_fetcher((raw.window_from - timedelta(days=7)).date(), raw.window_to.date())
+            if ars:
+                raw.fx_rates["ARS"] = ars
+        except (httpx.HTTPError, ValueError):
+            raw.unavailable["fx_rates"] = "fx_source_error"
     return raw
 
 

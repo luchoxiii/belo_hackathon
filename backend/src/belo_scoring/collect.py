@@ -18,6 +18,7 @@ from pathlib import Path
 from .aggregate import month_range, aggregate_monthly
 from .categorize import categorize
 from .fetch import fetch_raw, load_raw, save_raw
+from .fx import fx_for_rates
 from .models import CategorizedMovement
 from .snapshot import build_declared_profile, build_savings_snapshot
 
@@ -52,7 +53,7 @@ async def run(window_days: int, out: Path, from_raw: Path | None) -> None:
     savings = build_savings_snapshot(raw)
     declared = build_declared_profile(raw)
     months = month_range(raw.window_from.strftime("%Y-%m"), raw.window_to.strftime("%Y-%m"))
-    monthly = aggregate_monthly(movements, savings, declared, months=months)
+    monthly = aggregate_monthly(movements, savings, declared, fx=fx_for_rates(raw.fx_rates), months=months)
 
     out.mkdir(parents=True, exist_ok=True)
     _write(out / "categorized.json", [m.model_dump(mode="json") for m in movements])
@@ -67,7 +68,7 @@ async def run(window_days: int, out: Path, from_raw: Path | None) -> None:
     if raw.unavailable:
         print("\nNo disponible:", ", ".join(f"{k} ({v})" for k, v in raw.unavailable.items()))
     if savings.unconverted_currencies:
-        print("Sin cotización USD (pendiente FxProvider):", ", ".join(savings.unconverted_currencies))
+        print("Sin cotización USD:", ", ".join(savings.unconverted_currencies))
     print(f"\nPartial: {monthly.partial_pct if monthly.partial_pct is not None else '-'}%")
     print(f"Salida: {out / 'categorized.json'}, {out / 'monthly.json'}")
 

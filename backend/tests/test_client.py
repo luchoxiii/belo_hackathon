@@ -1,4 +1,5 @@
 import ast
+from datetime import date
 from pathlib import Path
 
 import httpx
@@ -7,10 +8,12 @@ import respx
 
 from belo_client import BeloAPIError, BeloAuthError, BeloClient
 from belo_scoring.fetch import fetch_raw
+from belo_scoring.fx_source import ARGENTINADATOS_URL
 
 from conftest import BASE_URL, tx
 
 SRC = Path(__file__).parent.parent / "src"
+ARGENTINADATOS = ARGENTINADATOS_URL.format(casa="oficial")
 
 
 class FakeSleep:
@@ -135,6 +138,10 @@ def _mock_full_api(router, cards_status=200):
     ], 2))
     router.get(f"{BASE_URL}/vaults").respond(json={"data": [{"id": "1295"}]})
     router.get(f"{BASE_URL}/vaults/1295").respond(json={"id": "1295", "earned": {}})
+    router.get(ARGENTINADATOS).respond(json=[
+        {"casa": "oficial", "compra": 1480, "venta": 1530, "fecha": "2000-01-01"},
+        {"casa": "oficial", "compra": 1480, "venta": 1530.5, "fecha": date.today().isoformat()},
+    ])
 
 
 async def test_fetch_raw_only_uses_get():
@@ -152,7 +159,19 @@ async def test_fetch_raw_only_uses_get():
     # Corta la paginación al salir de la ventana y filtra lo viejo
     assert [t["id"] for t in raw.card_transactions["296"]] == ["new"]
     assert raw.vault_details["1295"]["id"] == "1295"
+    # Cotizaciones de la ventana, sin pasar por float
+    assert raw.fx_rates["ARS"] == {date.today().isoformat(): "1505.25"}
     assert raw.unavailable == {}
+
+
+async def test_fx_source_failure_is_not_fatal():
+    with respx.mock(assert_all_called=False) as router:
+        _mock_full_api(router)
+        router.get(ARGENTINADATOS).respond(503)
+        async with client() as belo:
+            raw = await fetch_raw(30, client=belo)
+    assert raw.fx_rates == {}
+    assert raw.unavailable == {"fx_rates": "fx_source_error"}
 
 
 async def test_cards_403_is_not_fatal():
@@ -166,9 +185,10 @@ async def test_cards_403_is_not_fatal():
 
 
 def test_source_never_calls_write_methods():
-    """Ningún archivo del cliente ni del módulo llama post/put/patch/delete/request."""
+    """Ningún archivo del cliente, del scoring ni del MCP llama post/put/patch/delete/request."""
     forbidden = {"post", "put", "patch", "delete", "request", "send", "stream"}
-    files = [SRC / "belo_client.py", *(SRC / "belo_scoring").glob("*.py")]
+    files = [SRC / "belo_client.py", SRC / "mcp_server.py",
+             *(SRC / "belo_scoring").glob("*.py"), *(SRC / "scoring_engine").glob("*.py")]
     for path in files:
         for node in ast.walk(ast.parse(path.read_text())):
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
