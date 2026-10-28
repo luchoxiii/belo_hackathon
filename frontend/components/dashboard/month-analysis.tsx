@@ -142,26 +142,38 @@ export function MonthAnalysis() {
 
         {/* Navegación de mes */}
         <div className="flex items-center justify-between">
-          <Button variant="ghost" size="icon" onClick={() => navigateMonth(-1)}>
-            <ChevronLeft className="size-5" />
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => navigateMonth(-1)}
+            aria-label="Ir al mes anterior"
+          >
+            <ChevronLeft className="size-5" aria-hidden="true" />
           </Button>
 
           <div className="text-center">
-            <p className="text-lg font-semibold capitalize">{getMonthLabel(selectedDate)}</p>
+            <p className="text-lg font-semibold capitalize" aria-live="polite">{getMonthLabel(selectedDate)}</p>
             {isCurrentMonth && <p className="text-xs text-muted-foreground">Mes actual</p>}
           </div>
 
-          <Button variant="ghost" size="icon" onClick={() => navigateMonth(1)}>
-            <ChevronRight className="size-5" />
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => navigateMonth(1)}
+            aria-label="Ir al mes siguiente"
+          >
+            <ChevronRight className="size-5" aria-hidden="true" />
           </Button>
         </div>
 
         {/* Selector rápido de meses */}
-        <div className="flex justify-center gap-1">
+        <div className="flex justify-center gap-1" role="tablist" aria-label="Seleccionar mes">
           {quickMonths.map(m => (
             <button
               key={m.key}
               onClick={() => setSelectedDate(m.date)}
+              role="tab"
+              aria-selected={m.key === monthKey}
               className={cn(
                 'rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors',
                 m.key === monthKey
@@ -179,13 +191,14 @@ export function MonthAnalysis() {
 
       {/* Contenido */}
       {isLoading ? (
-        <div className="space-y-4">
-          <div className="h-20 animate-pulse rounded-xl bg-muted" />
-          <div className="h-40 animate-pulse rounded-xl bg-muted" />
+        <div className="space-y-4" role="status" aria-busy="true" aria-label="Cargando datos del mes">
+          <span className="sr-only">Cargando análisis mensual...</span>
+          <div className="h-20 animate-pulse rounded-xl bg-muted" aria-hidden="true" />
+          <div className="h-40 animate-pulse rounded-xl bg-muted" aria-hidden="true" />
         </div>
       ) : error || !data ? (
-        <div className="flex items-center gap-3 rounded-xl bg-muted/50 p-4 text-sm text-muted-foreground">
-          <AlertCircle className="size-5" />
+        <div className="flex items-center gap-3 rounded-xl bg-muted/50 p-4 text-sm text-muted-foreground" role="alert">
+          <AlertCircle className="size-5" aria-hidden="true" />
           <p>No hay datos para este mes</p>
         </div>
       ) : (
@@ -252,11 +265,12 @@ export function MonthAnalysis() {
           {/* Breakdown de gastos */}
           <div className="space-y-2">
             <h3 className="text-sm font-medium">Detalle de gastos</h3>
-            <div className="space-y-1">
+            <div className="space-y-1" role="list" aria-label="Lista de categorías de gastos">
               {data.breakdown.expenses.slice(0, 8).map(cat => (
                 <CategoryRow
                   key={cat.category}
                   category={cat}
+                  categoryId={`expense-${cat.category}`}
                   isProjection={data.type === 'projection'}
                   expanded={expandedCategory === cat.category}
                   onToggle={() => setExpandedCategory(
@@ -277,11 +291,12 @@ export function MonthAnalysis() {
           {data.breakdown.income.length > 0 && (
             <div className="space-y-2">
               <h3 className="text-sm font-medium">Detalle de ingresos</h3>
-              <div className="space-y-1">
+              <div className="space-y-1" role="list" aria-label="Lista de categorías de ingresos">
                 {data.breakdown.income.map(cat => (
                   <CategoryRow
                     key={cat.category}
                     category={cat}
+                    categoryId={`income-${cat.category}`}
                     isProjection={data.type === 'projection'}
                     expanded={expandedCategory === `income-${cat.category}`}
                     onToggle={() => setExpandedCategory(
@@ -307,6 +322,7 @@ function CategoryRow({
   onToggle,
   total,
   isIncome = false,
+  categoryId,
 }: {
   category: {
     label: string
@@ -326,15 +342,19 @@ function CategoryRow({
   onToggle: () => void
   total: number
   isIncome?: boolean
+  categoryId: string
 }) {
   const percentage = total > 0 ? (category.amount / total) * 100 : 0
   const hasDetails = category.transactions && category.transactions.length > 0
+  const panelId = `category-panel-${categoryId}`
 
   return (
     <div className="rounded-lg border bg-background/50">
       <button
         onClick={onToggle}
         disabled={!hasDetails && !isProjection}
+        aria-expanded={hasDetails ? expanded : undefined}
+        aria-controls={hasDetails ? panelId : undefined}
         className={cn(
           'flex w-full items-center gap-3 p-3 text-left transition-colors',
           (hasDetails || isProjection) && 'hover:bg-muted/50'
@@ -345,6 +365,7 @@ function CategoryRow({
             'flex size-8 shrink-0 items-center justify-center rounded-full',
             isIncome ? 'bg-income/10 text-income' : 'bg-muted text-muted-foreground'
           )}
+          aria-hidden="true"
         >
           {isIncome ? <ArrowDownLeft className="size-4" /> : <ArrowUpRight className="size-4" />}
         </div>
@@ -379,20 +400,23 @@ function CategoryRow({
             <p className="text-xs text-muted-foreground">{percentage.toFixed(1)}%</p>
           </div>
           {hasDetails && (
-            <ChevronDown className={cn(
-              'size-4 text-muted-foreground transition-transform',
-              expanded && 'rotate-180'
-            )} />
+            <ChevronDown
+              className={cn(
+                'size-4 text-muted-foreground transition-transform',
+                expanded && 'rotate-180'
+              )}
+              aria-hidden="true"
+            />
           )}
         </div>
       </button>
 
       {/* Transacciones expandidas */}
       {expanded && hasDetails && (
-        <div className="border-t bg-muted/30 px-3 py-2">
-          <div className="max-h-48 space-y-1.5 overflow-y-auto">
+        <div id={panelId} className="border-t bg-muted/30 px-3 py-2" role="region" aria-label={`Transacciones de ${category.label}`}>
+          <ul className="max-h-48 space-y-1.5 overflow-y-auto">
             {category.transactions!.map(tx => (
-              <div key={tx.id} className="flex items-center justify-between text-xs">
+              <li key={tx.id} className="flex items-center justify-between text-xs">
                 <div className="min-w-0 flex-1">
                   <p className="truncate font-medium">{tx.description}</p>
                   <p className="text-muted-foreground">
@@ -403,9 +427,9 @@ function CategoryRow({
                 <p className={cn('tabular font-medium', isIncome && 'text-income')}>
                   {formatARS(tx.amount)}
                 </p>
-              </div>
+              </li>
             ))}
-          </div>
+          </ul>
         </div>
       )}
     </div>

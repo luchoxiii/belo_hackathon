@@ -91,7 +91,7 @@ export function ChatView() {
   return (
     <div className="flex h-full flex-col">
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto flex w-full max-w-2xl flex-col gap-6 px-4 py-6">
+        <div className="mx-auto flex w-full max-w-2xl flex-col gap-6 px-4 py-6" aria-live="polite" aria-atomic="false">
           {messages.length === 0 ? (
             <EmptyState onPick={submit} />
           ) : (
@@ -111,7 +111,7 @@ export function ChatView() {
 
           {/* Quick reply buttons */}
           {quickReplies && quickReplies.length > 0 && (
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap gap-2" role="group" aria-label="Respuestas rápidas sugeridas">
               {quickReplies.map((reply) => (
                 <button
                   key={reply.value}
@@ -152,6 +152,9 @@ export function ChatView() {
           <label htmlFor="chat-input" className="sr-only">
             Preguntale algo a el asistente
           </label>
+          <span id="chat-input-hint" className="sr-only">
+            Presioná Enter para enviar, Shift+Enter para nueva línea
+          </span>
           <textarea
             id="chat-input"
             rows={1}
@@ -169,14 +172,15 @@ export function ChatView() {
               }
             }}
             placeholder="Preguntale a el asistente sobre tu plata…"
+            aria-describedby="chat-input-hint"
             className="max-h-32 min-h-9 flex-1 resize-none bg-transparent px-2 py-1.5 text-base leading-relaxed outline-none placeholder:text-muted-foreground md:text-sm"
           />
           {busy ? (
-            <Button type="button" size="icon" variant="secondary" onClick={() => stop()} aria-label="Detener">
+            <Button type="button" size="icon" variant="secondary" onClick={() => stop()} aria-label="Detener generación">
               <Square className="size-4" aria-hidden="true" />
             </Button>
           ) : (
-            <Button type="submit" size="icon" disabled={!input.trim()} aria-label="Enviar">
+            <Button type="submit" size="icon" disabled={!input.trim()} aria-label="Enviar mensaje">
               <ArrowUp className="size-4" aria-hidden="true" />
             </Button>
           )}
@@ -190,8 +194,8 @@ function EmptyState({ onPick }: { onPick: (text: string) => void }) {
   return (
     <div className="flex flex-col items-center gap-8 pt-8 text-center md:pt-16">
       <div className="flex flex-col items-center gap-4">
-        <span className="flex size-14 items-center justify-center rounded-2xl bg-primary text-primary-foreground">
-          <Mountain className="size-7" aria-hidden="true" />
+        <span className="flex size-14 items-center justify-center rounded-2xl bg-primary text-primary-foreground" aria-hidden="true">
+          <Mountain className="size-7" />
         </span>
         <div className="flex flex-col gap-2">
           <h1 className="text-balance text-2xl font-semibold md:text-3xl">¿Qué querés saber de tu plata?</h1>
@@ -200,19 +204,21 @@ function EmptyState({ onPick }: { onPick: (text: string) => void }) {
           </p>
         </div>
       </div>
-      <ul className="flex w-full flex-col gap-2">
-        {SUGGESTIONS.map((text) => (
-          <li key={text}>
-            <button
-              type="button"
-              onClick={() => onPick(text)}
-              className="w-full rounded-xl border border-border bg-card px-4 py-3 text-left text-sm leading-relaxed transition-colors hover:border-primary/60 hover:bg-accent"
-            >
-              {text}
-            </button>
-          </li>
-        ))}
-      </ul>
+      <nav aria-label="Preguntas sugeridas">
+        <ul className="flex w-full flex-col gap-2">
+          {SUGGESTIONS.map((text) => (
+            <li key={text}>
+              <button
+                type="button"
+                onClick={() => onPick(text)}
+                className="w-full rounded-xl border border-border bg-card px-4 py-3 text-left text-sm leading-relaxed transition-colors hover:border-primary hover:bg-primary/10 focus:border-primary focus:ring-2 focus:ring-ring"
+              >
+                {text}
+              </button>
+            </li>
+          ))}
+        </ul>
+      </nav>
     </div>
   )
 }

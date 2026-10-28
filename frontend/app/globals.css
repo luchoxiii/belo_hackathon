@@ -68,9 +68,9 @@
   --secondary: #F5F0EB;
   --secondary-foreground: #1a1a2e;
 
-  /* Muted */
+  /* Muted - improved contrast for accessibility (4.5:1 ratio) */
   --muted: #F5F0EB;
-  --muted-foreground: #6B7280;
+  --muted-foreground: #4B5563;
 
   /* Accent: Teal */
   --accent: #0D9488;
@@ -114,7 +114,7 @@
   --secondary: #21262d;
   --secondary-foreground: #f0f6fc;
   --muted: #21262d;
-  --muted-foreground: #8b949e;
+  --muted-foreground: #9ca3af;
   --accent: #0D9488;
   --accent-foreground: #FFFFFF;
   --destructive: #f85149;
@@ -137,6 +137,35 @@
   }
   h1, h2, h3, h4 {
     @apply font-heading tracking-tight;
+  }
+  /* Focus visible styles for keyboard navigation */
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+  /* Screen reader only utility (if not already provided by Tailwind) */
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border-width: 0;
+  }
+}
+
+/* Reduced motion support for users who prefer less motion */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }
 

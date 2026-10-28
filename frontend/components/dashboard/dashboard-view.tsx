@@ -81,7 +81,7 @@ export function DashboardView() {
   if (error || !data) {
     return (
       <div className="flex h-full items-center justify-center p-8">
-        <div className="text-center card-premium p-8">
+        <div className="text-center card-premium p-8" role="alert">
           <p className="text-lg font-heading font-semibold">No hay datos disponibles</p>
           <p className="mt-2 text-sm text-muted-foreground">
             Ejecutá <code className="rounded bg-secondary px-1.5 py-0.5 text-xs">npm run generate-mock-data</code> para generar datos de prueba.
@@ -138,14 +138,42 @@ export function DashboardView() {
       {/* Charts Section */}
       <div className="grid gap-6 lg:grid-cols-2">
         {/* Income vs Expenses - Custom Bar Chart */}
-        <section className="card-premium p-6">
+        <section className="card-premium p-6" aria-labelledby="chart-monthly-title">
           <div className="mb-6">
-            <h2 className="font-heading text-lg font-semibold">Ingresos vs Gastos</h2>
+            <h2 id="chart-monthly-title" className="font-heading text-lg font-semibold">Ingresos vs Gastos</h2>
             <p className="text-xs text-muted-foreground">Últimos {data.charts.monthly.length} meses</p>
           </div>
 
-          {/* Custom Bar Chart */}
-          <div className="flex items-end gap-2 h-48">
+          {/* Screen reader accessible table */}
+          <table className="sr-only">
+            <caption>Comparación de ingresos y gastos mensuales</caption>
+            <thead>
+              <tr>
+                <th scope="col">Mes</th>
+                <th scope="col">Ingresos</th>
+                <th scope="col">Gastos</th>
+                <th scope="col">Balance</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.charts.monthly.slice(-8).map((month) => (
+                <tr key={month.month}>
+                  <td>{month.label}</td>
+                  <td>{formatARS(month.income)}</td>
+                  <td>{formatARS(month.expenses)}</td>
+                  <td>{formatARS(month.net)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
+          {/* Custom Bar Chart - Visual only */}
+          <div
+            className="flex items-end gap-2 h-48"
+            role="img"
+            aria-label={`Gráfico de barras: ingresos y gastos de los últimos ${data.charts.monthly.slice(-8).length} meses`}
+            aria-hidden="false"
+          >
             {data.charts.monthly.slice(-8).map((month, i) => {
               const incomeHeight = (month.income / maxMonthlyValue) * 100
               const expenseHeight = (month.expenses / maxMonthlyValue) * 100
@@ -156,23 +184,23 @@ export function DashboardView() {
                     <div
                       className="flex-1 rounded-t-lg bg-gradient-to-t from-income to-income/70 transition-all hover:from-income/90 hover:to-income/60"
                       style={{ height: `${incomeHeight}%` }}
-                      title={`Ingresos: ${formatARS(month.income)}`}
+                      aria-hidden="true"
                     />
                     {/* Expense bar */}
                     <div
                       className="flex-1 rounded-t-lg bg-gradient-to-t from-primary to-primary/70 transition-all hover:from-primary/90 hover:to-primary/60"
                       style={{ height: `${expenseHeight}%` }}
-                      title={`Gastos: ${formatARS(month.expenses)}`}
+                      aria-hidden="true"
                     />
                   </div>
-                  <span className="text-[10px] text-muted-foreground">{month.label.split(' ')[0]}</span>
+                  <span className="text-[10px] text-muted-foreground" aria-hidden="true">{month.label.split(' ')[0]}</span>
                 </div>
               )
             })}
           </div>
 
           {/* Legend */}
-          <div className="flex justify-center gap-6 mt-4 text-xs">
+          <div className="flex justify-center gap-6 mt-4 text-xs" aria-hidden="true">
             <div className="flex items-center gap-2">
               <span className="size-3 rounded-sm bg-gradient-to-t from-income to-income/70" />
               <span className="text-muted-foreground">Ingresos</span>
@@ -185,16 +213,46 @@ export function DashboardView() {
         </section>
 
         {/* Categories Donut */}
-        <section className="card-premium p-6">
+        <section className="card-premium p-6" aria-labelledby="chart-categories-title">
           <div className="mb-6">
-            <h2 className="font-heading text-lg font-semibold">Gastos por categoría</h2>
+            <h2 id="chart-categories-title" className="font-heading text-lg font-semibold">Gastos por categoría</h2>
             <p className="text-xs text-muted-foreground">Top categorías</p>
           </div>
 
+          {/* Screen reader accessible table */}
+          <table className="sr-only">
+            <caption>Distribución de gastos por categoría</caption>
+            <thead>
+              <tr>
+                <th scope="col">Categoría</th>
+                <th scope="col">Monto</th>
+                <th scope="col">Porcentaje</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(() => {
+                const total = data.charts.categories.reduce((sum, c) => sum + c.value, 0)
+                return data.charts.categories.slice(0, 6).map((cat) => (
+                  <tr key={cat.category}>
+                    <td>{cat.label}</td>
+                    <td>{formatARS(cat.value)}</td>
+                    <td>{((cat.value / total) * 100).toFixed(1)}%</td>
+                  </tr>
+                ))
+              })()}
+            </tbody>
+          </table>
+
           <div className="flex items-center gap-6">
-            {/* Custom Donut Chart */}
+            {/* Custom Donut Chart - Visual only */}
             <div className="relative w-40 h-40 shrink-0">
-              <svg viewBox="0 0 100 100" className="w-full h-full -rotate-90">
+              <svg
+                viewBox="0 0 100 100"
+                className="w-full h-full -rotate-90"
+                role="img"
+                aria-label="Gráfico circular de gastos por categoría"
+                focusable="false"
+              >
                 {(() => {
                   const total = data.charts.categories.reduce((sum, c) => sum + c.value, 0)
                   let currentAngle = 0
@@ -222,15 +280,16 @@ export function DashboardView() {
                         className="transition-opacity hover:opacity-80 cursor-pointer"
                         strokeWidth="0.5"
                         stroke="#FDF8F3"
+                        aria-hidden="true"
                       />
                     )
                   })
                 })()}
                 {/* Center circle for donut effect */}
-                <circle cx="50" cy="50" r="25" fill="#FDF8F3" />
+                <circle cx="50" cy="50" r="25" fill="#FDF8F3" aria-hidden="true" />
               </svg>
               {/* Center text */}
-              <div className="absolute inset-0 flex flex-col items-center justify-center">
+              <div className="absolute inset-0 flex flex-col items-center justify-center" aria-hidden="true">
                 <span className="text-xs text-muted-foreground">Total</span>
                 <span className="tabular font-heading text-sm font-semibold">
                   {formatARS(data.charts.categories.reduce((sum, c) => sum + c.value, 0))}
@@ -239,20 +298,21 @@ export function DashboardView() {
             </div>
 
             {/* Legend */}
-            <div className="flex flex-col gap-2 flex-1">
+            <ul className="flex flex-col gap-2 flex-1" aria-label="Leyenda de categorías">
               {data.charts.categories.slice(0, 6).map((cat, i) => (
-                <div key={cat.category} className="flex items-center gap-2">
+                <li key={cat.category} className="flex items-center gap-2">
                   <span
                     className="size-3 rounded-full shrink-0"
                     style={{ backgroundColor: CATEGORY_COLORS[i] }}
+                    aria-hidden="true"
                   />
                   <span className="flex-1 text-xs truncate">{cat.label}</span>
                   <span className="tabular text-xs text-muted-foreground">
                     {formatARS(cat.value)}
                   </span>
-                </div>
+                </li>
               ))}
-            </div>
+            </ul>
           </div>
         </section>
       </div>
@@ -380,12 +440,18 @@ function StatMini({
 
 function DashboardSkeleton() {
   return (
-    <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 p-4 md:p-8">
-      <div className="h-10 w-64 animate-pulse rounded-lg bg-secondary" />
-      <div className="h-40 animate-pulse rounded-2xl bg-secondary" />
+    <div
+      className="mx-auto flex w-full max-w-6xl flex-col gap-8 p-4 md:p-8"
+      role="status"
+      aria-busy="true"
+      aria-label="Cargando panel financiero"
+    >
+      <span className="sr-only">Cargando tu información financiera...</span>
+      <div className="h-10 w-64 animate-pulse rounded-lg bg-secondary" aria-hidden="true" />
+      <div className="h-40 animate-pulse rounded-2xl bg-secondary" aria-hidden="true" />
       <div className="grid gap-6 lg:grid-cols-2">
         {[...Array(2)].map((_, i) => (
-          <div key={i} className="h-72 animate-pulse rounded-2xl bg-secondary" />
+          <div key={i} className="h-72 animate-pulse rounded-2xl bg-secondary" aria-hidden="true" />
         ))}
       </div>
     </div>
