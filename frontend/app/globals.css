@@ -1,0 +1,216 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@import 'shadcn/tailwind.css';
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --font-sans: var(--font-sans), 'DM Sans', system-ui, sans-serif;
+  --font-heading: var(--font-heading), 'Fraunces', Georgia, serif;
+
+  --color-income: var(--income);
+  --color-expense: var(--expense);
+  --color-coral: var(--coral);
+  --color-teal: var(--teal);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-foreground: var(--foreground);
+  --color-background: var(--background);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+/* Light/Cream Premium Theme */
+:root {
+  color-scheme: light;
+
+  /* Cream/warm backgrounds */
+  --background: #FDF8F3;
+  --foreground: #1a1a2e;
+
+  /* Cards with subtle warmth */
+  --card: #FFFFFF;
+  --card-foreground: #1a1a2e;
+
+  /* Popovers */
+  --popover: #FFFFFF;
+  --popover-foreground: #1a1a2e;
+
+  /* Primary: Coral/Salmon */
+  --primary: #F97068;
+  --primary-foreground: #FFFFFF;
+
+  /* Secondary: Soft neutral */
+  --secondary: #F5F0EB;
+  --secondary-foreground: #1a1a2e;
+
+  /* Muted - improved contrast for accessibility (4.5:1 ratio) */
+  --muted: #F5F0EB;
+  --muted-foreground: #4B5563;
+
+  /* Accent: Teal */
+  --accent: #0D9488;
+  --accent-foreground: #FFFFFF;
+
+  /* Destructive */
+  --destructive: #EF4444;
+
+  /* Borders */
+  --border: #E8E0D8;
+  --input: #E8E0D8;
+  --ring: #F97068;
+
+  /* Semantic colors */
+  --income: #10B981;
+  --expense: #F97068;
+  --coral: #F97068;
+  --teal: #0D9488;
+
+  /* Chart colors - vibrant palette */
+  --chart-1: #F97068;
+  --chart-2: #0D9488;
+  --chart-3: #8B5CF6;
+  --chart-4: #F59E0B;
+  --chart-5: #EC4899;
+
+  --radius: 1rem;
+}
+
+/* Dark mode override (if needed later) */
+.dark {
+  color-scheme: dark;
+  --background: #0d1117;
+  --foreground: #f0f6fc;
+  --card: #161b22;
+  --card-foreground: #f0f6fc;
+  --popover: #1c2128;
+  --popover-foreground: #f0f6fc;
+  --primary: #F97068;
+  --primary-foreground: #FFFFFF;
+  --secondary: #21262d;
+  --secondary-foreground: #f0f6fc;
+  --muted: #21262d;
+  --muted-foreground: #9ca3af;
+  --accent: #0D9488;
+  --accent-foreground: #FFFFFF;
+  --destructive: #f85149;
+  --border: #30363d;
+  --input: #30363d;
+  --ring: #F97068;
+  --income: #3FB950;
+  --expense: #F97068;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    -webkit-tap-highlight-color: transparent;
+  }
+  body {
+    @apply bg-background text-foreground font-sans;
+  }
+  h1, h2, h3, h4 {
+    @apply font-heading tracking-tight;
+  }
+  /* Focus visible styles for keyboard navigation */
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+  /* Screen reader only utility (if not already provided by Tailwind) */
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border-width: 0;
+  }
+}
+
+/* Reduced motion support for users who prefer less motion */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+@layer utilities {
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* Premium card styles - outside @layer to avoid @apply restrictions */
+.card-premium {
+  background-color: var(--card);
+  border-radius: 1rem;
+  border: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+  box-shadow:
+    0 1px 3px rgba(0,0,0,0.04),
+    0 4px 12px rgba(0,0,0,0.03);
+}
+
+.card-premium-hover {
+  background-color: var(--card);
+  border-radius: 1rem;
+  border: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+  box-shadow:
+    0 1px 3px rgba(0,0,0,0.04),
+    0 4px 12px rgba(0,0,0,0.03);
+  transition: all 200ms;
+}
+.card-premium-hover:hover {
+  box-shadow:
+    0 2px 8px rgba(0,0,0,0.06),
+    0 8px 24px rgba(0,0,0,0.06);
+  transform: translateY(-1px);
+}
+
+/* Gradient text */
+.text-gradient-coral {
+  background: linear-gradient(to right, #F97068, #FF8A80);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.text-gradient-teal {
+  background: linear-gradient(to right, #0D9488, #14B8A6);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
