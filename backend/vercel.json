@@ -1,0 +1,33 @@
+{
+  "functions": {
+    "api/index.py": {
+      "maxDuration": 30
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/mcp",
+      "destination": "/api/index"
+    },
+    {
+      "source": "/api/dashboard/:path*",
+      "destination": "/api/index"
+    },
+    {
+      "source": "/api/scoring/:path*",
+      "destination": "/api/index"
+    },
+    {
+      "source": "/api/docs",
+      "destination": "/api/index"
+    },
+    {
+      "source": "/api/sources",
+      "destination": "/api/index"
+    },
+    {
+      "source": "/api/sources/:path*",
+      "destination": "/api/index"
+    }
+  ]
+}

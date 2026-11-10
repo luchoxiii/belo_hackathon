@@ -1,0 +1,1633 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Savings Wallet API",
+    "version": "1.0.0",
+    "description": "API REST de solo lectura sobre la cuenta belo del usuario. No mueve fondos ni otorga préstamos.\n\n**Origen de los datos** (igual en todos los endpoints con datos de usuario)\n- Multi-source: cada usuario combina **belo** (real) con fuentes **dummy** (Mercado Pago, MODO, Ualá, Naranja X, OnlyFans, Cuenta DNI, Uber, PedidosYa, Rappi, Rapipago/Pago Fácil, Monotributo) que generan datos sintéticos para enriquecer el scoring. Cada usuario conecta o desconecta fuentes con `POST`/`DELETE /api/sources/{source_id}`; el dashboard y el score se recalculan en el próximo request. Sin configuración propia se usa el default (`DUMMY_SOURCES`, el perfil demo o todas).\n- Si el servidor corre con `BELO_DEMO_PROFILE` (`family`, `salaried`, `erratic`, `short_history`), usa ese perfil sintético y no requiere credencial.\n- Si no, usa la cuenta belo del header `X-Belo-Api-Key`.\n\n**dashboard**: panel de gastos con la forma de `mocks/mock-transactions.json`; montos como números JSON.\n\n**scoring**: score crediticio, desglose de reglas y oferta preaprobada simulada. El cálculo es determinístico (reglas fijas en `scoring_engine/config.py`, versionadas); ningún LLM interviene. Montos y ratios como strings decimales, igual que la API de belo."
+  },
+  "servers": [
+    {
+      "url": "/",
+      "description": "Este servidor"
+    },
+    {
+      "url": "http://127.0.0.1:8000",
+      "description": "Local (uvicorn)"
+    }
+  ],
+  "tags": [
+    {
+      "name": "dashboard",
+      "description": "Panel de gastos"
+    },
+    {
+      "name": "scoring",
+      "description": "Score crediticio explicado y oferta preaprobada (simulada). Reglas fijas, sin LLM."
+    },
+    {
+      "name": "sources",
+      "description": "Fuentes de datos (patrón repository)"
+    }
+  ],
+  "paths": {
+    "/api/dashboard/transactions": {
+      "get": {
+        "tags": [
+          "dashboard"
+        ],
+        "operationId": "getDashboardTransactions",
+        "summary": "Movimientos del usuario para el panel de gastos",
+        "description": "Ingresos (`credit`) y gastos (`debit`) de los últimos 180 días, ordenados del más viejo al más nuevo, con cuentas y totales. No incluye transferencias entre cuentas propias ni movimientos pendientes o fallidos.",
+        "security": [
+          {
+            "BeloApiKey": []
+          },
+          {}
+        ],
+        "responses": {
+          "200": {
+            "description": "Movimientos, cuentas y totales",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TransactionsResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Falta la credencial o no da acceso",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "examples": {
+                  "missing_credential": {
+                    "value": {
+                      "error": {
+                        "code": "missing_credential",
+                        "message": "Conectá tu cuenta belo (header X-Belo-Api-Key)."
+                      }
+                    }
+                  },
+                  "unauthorized": {
+                    "value": {
+                      "error": {
+                        "code": "unauthorized",
+                        "message": "Tu cuenta belo no dio acceso a los datos necesarios."
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Perfil demo mal configurado en el servidor",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "unknown_demo_profile",
+                    "message": "Perfil demo desconocido 'x'. Opciones: salaried, erratic, short_history, family"
+                  }
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "belo no respondió",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "upstream_error",
+                    "message": "No pudimos leer tus datos de belo en este momento."
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/scoring/profile": {
+      "get": {
+        "tags": [
+          "scoring"
+        ],
+        "operationId": "getScoringProfile",
+        "summary": "Score crediticio del usuario y oferta preaprobada",
+        "description": "Calcula el score sobre los movimientos de los últimos 180 días.\n\n1. **Filtros de elegibilidad** (`rejections`): si alguno falla, no hay score ni oferta.\n2. **Score** (`score.value`) = base 300 + puntos por feature + ajustes; máximo `score.max`.\n3. **Banda** A/B/C/D según el score; D no tiene oferta.\n4. **Oferta** preaprobada (indicativa): monto, plazo, cuota (sistema francés), TNA/TEA/CFT, limitada por capacidad de pago.\n\n`reasons` son las 3 features que más puntos restaron, en lenguaje simple. Las reglas y puntos de cada feature están en `GET /api/scoring/methodology`.",
+        "security": [
+          {
+            "BeloApiKey": []
+          },
+          {}
+        ],
+        "parameters": [
+          {
+            "name": "term_months",
+            "in": "query",
+            "required": false,
+            "description": "Plazo deseado en meses. Se ajusta al rango de la banda (mínimo 3).",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Decisión explicada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScoringProfile"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "term_months inválido",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "invalid_term_months",
+                    "message": "term_months debe ser un entero positivo."
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Falta la credencial o no da acceso",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "examples": {
+                  "missing_credential": {
+                    "value": {
+                      "error": {
+                        "code": "missing_credential",
+                        "message": "Conectá tu cuenta belo (header X-Belo-Api-Key)."
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Perfil demo mal configurado en el servidor",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "belo no respondió",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/scoring/methodology": {
+      "get": {
+        "tags": [
+          "scoring"
+        ],
+        "operationId": "getScoringMethodology",
+        "summary": "Reglas, umbrales y puntos de la scorecard vigente",
+        "description": "Metodología completa del score como JSON, generada desde la configuración del servidor (siempre coincide con lo que se aplica): pasos del cálculo, filtros de elegibilidad, tramos y puntos por feature, ajustes, bandas y reglas de la oferta. No requiere credencial ni usa datos de usuarios.",
+        "security": [
+          {}
+        ],
+        "responses": {
+          "200": {
+            "description": "Metodología",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Methodology"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sources": {
+      "get": {
+        "tags": [
+          "sources"
+        ],
+        "operationId": "getSources",
+        "summary": "Fuentes disponibles y las conectadas por el usuario",
+        "description": "Catálogo de fuentes (patrón repository): belo (real, solo lectura) y 11 fuentes dummy con datos sintéticos determinísticos por usuario. `connected` indica las que el usuario tiene conectadas. Si nunca configuró, se usa el default: `DUMMY_SOURCES` (`all`, `none` o lista), las del perfil demo, o todas para usuarios reales.",
+        "security": [
+          {
+            "BeloApiKey": []
+          },
+          {}
+        ],
+        "responses": {
+          "200": {
+            "description": "Fuentes del usuario",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourcesResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "DUMMY_SOURCES mal configurado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Falta la credencial (sin perfil demo activo)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "missing_credential",
+                    "message": "Conectá tu cuenta belo (header X-Belo-Api-Key)."
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sources/{source_id}": {
+      "post": {
+        "tags": [
+          "sources"
+        ],
+        "security": [
+          {
+            "BeloApiKey": []
+          },
+          {}
+        ],
+        "parameters": [
+          {
+            "name": "source_id",
+            "in": "path",
+            "required": true,
+            "description": "Id de la fuente dummy",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "mercado_pago",
+                "modo",
+                "uala",
+                "naranja_x",
+                "onlyfans",
+                "cuenta_dni",
+                "uber",
+                "pedidos_ya",
+                "rappi",
+                "rapipago_pagofacil",
+                "monotributo"
+              ]
+            }
+          }
+        ],
+        "operationId": "connectSource",
+        "summary": "Conectar una fuente",
+        "description": "Conecta la fuente para el usuario. Desde el próximo request, sus movimientos aparecen en `/api/dashboard/transactions` y se incluyen en `/api/scoring/profile` (score, banda y oferta). Idempotente. Solo cambia qué datos se combinan: no mueve fondos ni se conecta a la fuente real.",
+        "responses": {
+          "200": {
+            "description": "Fuentes del usuario, actualizadas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourcesResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Falta la credencial (sin perfil demo activo)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "missing_credential",
+                    "message": "Conectá tu cuenta belo (header X-Belo-Api-Key)."
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Fuente desconocida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "unknown_source",
+                    "message": "Fuente desconocida 'x'. Opciones: mercado_pago, ..."
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "sources"
+        ],
+        "security": [
+          {
+            "BeloApiKey": []
+          },
+          {}
+        ],
+        "parameters": [
+          {
+            "name": "source_id",
+            "in": "path",
+            "required": true,
+            "description": "Id de la fuente dummy",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "mercado_pago",
+                "modo",
+                "uala",
+                "naranja_x",
+                "onlyfans",
+                "cuenta_dni",
+                "uber",
+                "pedidos_ya",
+                "rappi",
+                "rapipago_pagofacil",
+                "monotributo"
+              ]
+            }
+          }
+        ],
+        "operationId": "disconnectSource",
+        "summary": "Desconectar una fuente",
+        "description": "Desconecta la fuente: sus movimientos dejan de aparecer en el dashboard y de contar para el score. Idempotente. belo no se puede desconectar (409).",
+        "responses": {
+          "200": {
+            "description": "Fuentes del usuario, actualizadas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourcesResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Falta la credencial (sin perfil demo activo)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "missing_credential",
+                    "message": "Conectá tu cuenta belo (header X-Belo-Api-Key)."
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Fuente desconocida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "unknown_source",
+                    "message": "Fuente desconocida 'x'. Opciones: mercado_pago, ..."
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "belo no se puede desconectar",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "cannot_disconnect",
+                    "message": "belo es la fuente principal y no se puede desconectar."
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "BeloApiKey": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-Belo-Api-Key",
+        "description": "API key de belo del usuario (`belo_live_...`). No hace falta con un perfil demo activo."
+      }
+    },
+    "schemas": {
+      "TransactionsResponse": {
+        "type": "object",
+        "required": [
+          "version",
+          "generatedAt",
+          "profile",
+          "accounts",
+          "transactions",
+          "dateRange",
+          "stats"
+        ],
+        "properties": {
+          "version": {
+            "type": "string",
+            "examples": [
+              "1.0.0"
+            ]
+          },
+          "generatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "profile": {
+            "$ref": "#/components/schemas/Profile"
+          },
+          "accounts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Account"
+            }
+          },
+          "transactions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Transaction"
+            }
+          },
+          "dateRange": {
+            "$ref": "#/components/schemas/DateRange"
+          },
+          "stats": {
+            "$ref": "#/components/schemas/Stats"
+          }
+        }
+      },
+      "Profile": {
+        "type": "object",
+        "description": "Solo datos derivados de los movimientos; no se inventan datos personales.",
+        "required": [
+          "id",
+          "name",
+          "familyMembers",
+          "employment",
+          "location"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Hash del titular (`demo-<perfil>` en modo demo). Nunca la credencial.",
+            "examples": [
+              "demo-family"
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Nombre visible. `null` para usuarios reales (belo no lo expone).",
+            "examples": [
+              "Usuario demo · Familia"
+            ]
+          },
+          "familyMembers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FamilyMember"
+            },
+            "description": "Siempre vacío por ahora."
+          },
+          "employment": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Employment"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Derivado de un ingreso recurrente (mismo pagador en ≥ 3 meses). `null` si no hay sueldo detectado."
+          },
+          "location": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Location"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Siempre `null` por ahora."
+          }
+        }
+      },
+      "FamilyMember": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "relationship": {
+            "type": "string",
+            "examples": [
+              "spouse",
+              "child"
+            ]
+          },
+          "birthDate": {
+            "type": "string",
+            "format": "date"
+          }
+        }
+      },
+      "Employment": {
+        "type": "object",
+        "required": [
+          "type",
+          "company",
+          "position",
+          "monthlySalary",
+          "payDay"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "examples": [
+              "empleado"
+            ]
+          },
+          "company": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Nombre del pagador del sueldo",
+            "examples": [
+              "Tech Solutions SA"
+            ]
+          },
+          "position": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Siempre `null` (no se deriva)."
+          },
+          "monthlySalary": {
+            "type": "integer",
+            "description": "Mediana del sueldo en ARS",
+            "examples": [
+              2800000
+            ]
+          },
+          "payDay": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 31,
+            "description": "Día de cobro más frecuente",
+            "examples": [
+              5
+            ]
+          }
+        }
+      },
+      "Location": {
+        "type": "object",
+        "properties": {
+          "city": {
+            "type": "string"
+          },
+          "province": {
+            "type": "string"
+          }
+        }
+      },
+      "Account": {
+        "type": "object",
+        "required": [
+          "id",
+          "type",
+          "name",
+          "currency",
+          "balance"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "examples": [
+              "balance-ARGt",
+              "vault-demo-vault-vacaciones",
+              "mercado_pago-mercado_pago-wallet-ARS"
+            ]
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "checking",
+              "crypto",
+              "savings"
+            ],
+            "description": "`checking` = pesos, `crypto` = cripto/stablecoins, `savings` = vault"
+          },
+          "name": {
+            "type": "string",
+            "examples": [
+              "Cuenta Belo",
+              "Wallet USDT",
+              "Vacaciones"
+            ]
+          },
+          "currency": {
+            "type": "string",
+            "description": "ARGt se informa como ARS y BRAt como BRL",
+            "examples": [
+              "ARS",
+              "USDT",
+              "BTC"
+            ]
+          },
+          "balance": {
+            "$ref": "#/components/schemas/Balance"
+          },
+          "source": {
+            "type": "string",
+            "description": "Fuente de datos de la cuenta",
+            "examples": [
+              "belo",
+              "mercado_pago"
+            ]
+          }
+        }
+      },
+      "Balance": {
+        "type": "object",
+        "required": [
+          "currency",
+          "available",
+          "updatedAt"
+        ],
+        "properties": {
+          "currency": {
+            "type": "string"
+          },
+          "available": {
+            "type": "number",
+            "examples": [
+              1850000
+            ]
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "Transaction": {
+        "type": "object",
+        "required": [
+          "id",
+          "type",
+          "category",
+          "amount",
+          "currency",
+          "amountArs",
+          "description",
+          "method",
+          "createdAt",
+          "merchant"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "debit",
+              "credit"
+            ],
+            "description": "`credit` = ingreso, `debit` = gasto"
+          },
+          "category": {
+            "type": "string",
+            "description": "Vocabulario de `mock-transactions.json`, asignado por palabra clave en comercio/contraparte.\n\n- Ingresos: `salario` (mismo pagador ≥ 3 meses, monto estable, ≤ 2 depósitos/mes), `freelance`, `ventas`, `ingreso_plataforma` (Uber, PedidosYa, Rappi, OnlyFans), `reembolso`, `aguinaldo`, `venta_crypto`.\n- Gastos: `alquiler`, `expensas`, `luz`, `gas`, `agua`, `internet`, `telefono`, `cuota_colegio`, `debito_prepaga`, `debito_gimnasio`, `debito_netflix`, `debito_spotify`, `debito_streaming`, `tarjeta_supermercado`, `tarjeta_combustible`, `tarjeta_restaurante`, `tarjeta_farmacia`, `tarjeta_indumentaria`, `tarjeta_tecnologia`, `uber_taxi`, `peaje`, `seguro_auto`, `impuesto_ganancias`, `compra_crypto`, `monotributo`, `compras_online`, `delivery`, `suscripciones`, `pago_qr`.\n- Sin coincidencia (no están en el mock): `transferencia_recibida`, `deposito_crypto`, `transferencia_enviada`, `tarjeta_otros`, `pix_enviado`, `retiro_crypto`, `servicios`, `impuestos`, `compras_plataforma`.",
+            "examples": [
+              "tarjeta_supermercado",
+              "salario",
+              "alquiler"
+            ]
+          },
+          "amount": {
+            "type": "number",
+            "description": "Monto en la moneda original. En gastos incluye fee e impuestos."
+          },
+          "currency": {
+            "type": "string",
+            "examples": [
+              "ARS",
+              "USDT"
+            ]
+          },
+          "amountArs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Monto en ARS redondeado. `null` si no hay cotización para esa fecha."
+          },
+          "description": {
+            "type": "string",
+            "examples": [
+              "Transferencia a Inmobiliaria Palermo",
+              "JUMBO",
+              "Compra de USDT"
+            ]
+          },
+          "method": {
+            "type": "string",
+            "enum": [
+              "debito_automatico",
+              "tarjeta_credito",
+              "tarjeta_debito",
+              "transferencia",
+              "crypto",
+              "plazo_fijo",
+              "efectivo"
+            ],
+            "description": "Hoy se emiten `tarjeta_debito` (tarjetas que debitan del saldo), `tarjeta_credito` (Naranja X), `transferencia`, `crypto` y `efectivo` (pago de servicios en Rapipago/Pago Fácil)."
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "merchant": {
+            "type": "string",
+            "examples": [
+              "JUMBO",
+              "Tech Solutions SA"
+            ]
+          },
+          "card": {
+            "$ref": "#/components/schemas/CardInfo"
+          },
+          "crypto": {
+            "$ref": "#/components/schemas/CryptoInfo"
+          },
+          "investment": {
+            "$ref": "#/components/schemas/InvestmentInfo"
+          },
+          "source": {
+            "type": "string",
+            "description": "Fuente de datos del movimiento (`belo`, `mercado_pago`, `uber`...). Campo agregado respecto del mock.",
+            "examples": [
+              "belo",
+              "mercado_pago",
+              "uber"
+            ]
+          }
+        }
+      },
+      "CardInfo": {
+        "type": "object",
+        "description": "Solo en consumos con tarjeta",
+        "properties": {
+          "last4": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "examples": [
+              "4532"
+            ]
+          },
+          "brand": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "examples": [
+              "visa"
+            ]
+          }
+        }
+      },
+      "CryptoInfo": {
+        "type": "object",
+        "description": "Solo en compras/ventas de cripto (swaps)",
+        "properties": {
+          "asset": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "examples": [
+              "USDT"
+            ]
+          },
+          "amount": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "Cantidad del activo"
+          },
+          "priceArs": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "Precio de 1 unidad en ARS"
+          }
+        }
+      },
+      "InvestmentInfo": {
+        "type": "object",
+        "description": "Presente en el mock (plazo fijo); hoy no se emite.",
+        "properties": {
+          "type": {
+            "type": "string"
+          },
+          "rate": {
+            "type": "number"
+          },
+          "maturityDate": {
+            "type": "string",
+            "format": "date"
+          }
+        }
+      },
+      "DateRange": {
+        "type": "object",
+        "required": [
+          "from",
+          "to"
+        ],
+        "properties": {
+          "from": {
+            "type": "string",
+            "format": "date"
+          },
+          "to": {
+            "type": "string",
+            "format": "date"
+          }
+        }
+      },
+      "Stats": {
+        "type": "object",
+        "required": [
+          "totalTransactions",
+          "totalIncome",
+          "totalExpenses",
+          "averageMonthlyIncome",
+          "averageMonthlyExpenses"
+        ],
+        "description": "Totales en ARS sobre `transactions`. Los promedios dividen por los meses con movimientos (incluye el mes en curso).",
+        "properties": {
+          "totalTransactions": {
+            "type": "integer"
+          },
+          "totalIncome": {
+            "type": "integer"
+          },
+          "totalExpenses": {
+            "type": "integer"
+          },
+          "averageMonthlyIncome": {
+            "type": "integer"
+          },
+          "averageMonthlyExpenses": {
+            "type": "integer"
+          }
+        }
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "object",
+            "required": [
+              "code",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "missing_credential",
+                  "unauthorized",
+                  "upstream_error",
+                  "unknown_demo_profile",
+                  "invalid_term_months",
+                  "invalid_dummy_sources",
+                  "unknown_source",
+                  "cannot_disconnect"
+                ]
+              },
+              "message": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "ScoringProfile": {
+        "type": "object",
+        "required": [
+          "demo",
+          "scorecard_version",
+          "decided_at",
+          "eligible",
+          "rejections",
+          "score",
+          "reasons",
+          "offer",
+          "no_offer_reason",
+          "sources",
+          "uses_dummy_data"
+        ],
+        "properties": {
+          "demo": {
+            "type": "boolean",
+            "description": "`true` si es un perfil sintético (BELO_DEMO_PROFILE). No presentarlo como real."
+          },
+          "scorecard_version": {
+            "type": "string",
+            "examples": [
+              "v1-expert"
+            ]
+          },
+          "decided_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "eligible": {
+            "type": "boolean",
+            "description": "`false` si falló algún filtro de elegibilidad"
+          },
+          "rejections": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CodeMessage"
+            },
+            "description": "Filtros que fallaron (vacío si es elegible)"
+          },
+          "score": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ScoreValue"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reasons": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScoreReason"
+            },
+            "description": "Las 3 features que más puntos restaron"
+          },
+          "offer": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/LoanOffer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "no_offer_reason": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CodeMessage"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Por qué no hay oferta siendo elegible: `low_score`, `no_payment_capacity`, `amount_below_minimum`"
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SourceInfo"
+            },
+            "description": "Fuentes combinadas en esta decisión"
+          },
+          "uses_dummy_data": {
+            "type": "boolean",
+            "description": "`true` si alguna fuente usada es dummy (datos sintéticos). No presentar el resultado como real."
+          }
+        }
+      },
+      "CodeMessage": {
+        "type": "object",
+        "required": [
+          "code",
+          "message"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "examples": [
+              "short_history"
+            ]
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "ScoreValue": {
+        "type": "object",
+        "required": [
+          "value",
+          "band",
+          "base",
+          "max"
+        ],
+        "properties": {
+          "value": {
+            "type": "integer",
+            "examples": [
+              700
+            ]
+          },
+          "band": {
+            "type": "string",
+            "enum": [
+              "A",
+              "B",
+              "C",
+              "D"
+            ]
+          },
+          "base": {
+            "type": "integer",
+            "examples": [
+              300
+            ]
+          },
+          "max": {
+            "type": "integer",
+            "description": "Score máximo posible",
+            "examples": [
+              860
+            ]
+          }
+        }
+      },
+      "ScoreReason": {
+        "type": "object",
+        "required": [
+          "feature",
+          "message"
+        ],
+        "properties": {
+          "feature": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string",
+            "examples": [
+              "Poco colchón de ahorro respecto de tus gastos"
+            ]
+          }
+        }
+      },
+      "LoanOffer": {
+        "type": "object",
+        "description": "Oferta indicativa y simulada; no es un compromiso de otorgamiento.",
+        "required": [
+          "band",
+          "currency",
+          "amount_max_usd",
+          "term_months",
+          "max_term_months",
+          "min_term_months",
+          "tna",
+          "tea",
+          "cft",
+          "installment_usd",
+          "max_installment_usd",
+          "total_payable_usd",
+          "valid_until",
+          "disclaimer"
+        ],
+        "properties": {
+          "band": {
+            "type": "string",
+            "enum": [
+              "A",
+              "B",
+              "C"
+            ]
+          },
+          "currency": {
+            "type": "string",
+            "examples": [
+              "USD"
+            ]
+          },
+          "amount_max_usd": {
+            "type": "string",
+            "description": "Monto máximo preaprobado (string decimal)",
+            "examples": [
+              "1770"
+            ]
+          },
+          "term_months": {
+            "type": "integer",
+            "examples": [
+              9
+            ]
+          },
+          "max_term_months": {
+            "type": "integer"
+          },
+          "min_term_months": {
+            "type": "integer"
+          },
+          "tna": {
+            "type": "string",
+            "description": "Tasa nominal anual (string decimal)",
+            "examples": [
+              "0.24"
+            ]
+          },
+          "tea": {
+            "type": "string",
+            "description": "Tasa efectiva anual (string decimal)",
+            "examples": [
+              "0.2682"
+            ]
+          },
+          "cft": {
+            "type": "string",
+            "description": "Costo financiero total (= TEA en v1, sin comisiones) (string decimal)",
+            "examples": [
+              "0.2682"
+            ]
+          },
+          "installment_usd": {
+            "type": "string",
+            "description": "Cuota fija (string decimal)",
+            "examples": [
+              "216.85"
+            ]
+          },
+          "max_installment_usd": {
+            "type": "string",
+            "description": "Cuota máxima según capacidad de pago (string decimal)"
+          },
+          "total_payable_usd": {
+            "type": "string",
+            "description": "Total a pagar (string decimal)"
+          },
+          "valid_until": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "disclaimer": {
+            "type": "string"
+          }
+        }
+      },
+      "Methodology": {
+        "type": "object",
+        "required": [
+          "scorecard_version",
+          "deterministic",
+          "llm_involved",
+          "summary",
+          "data_window",
+          "pipeline",
+          "eligibility_gates",
+          "score",
+          "bands",
+          "offer"
+        ],
+        "properties": {
+          "scorecard_version": {
+            "type": "string"
+          },
+          "deterministic": {
+            "type": "boolean",
+            "description": "Siempre `true`: mismos datos, mismo resultado"
+          },
+          "llm_involved": {
+            "type": "boolean",
+            "description": "Siempre `false`: ningún LLM participa del cálculo"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "data_window": {
+            "type": "object",
+            "properties": {
+              "max_months": {
+                "type": "integer"
+              },
+              "complete_months_only": {
+                "type": "boolean"
+              },
+              "currency": {
+                "type": "string"
+              }
+            }
+          },
+          "pipeline": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "step",
+                "function",
+                "description"
+              ],
+              "properties": {
+                "step": {
+                  "type": "string"
+                },
+                "function": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "eligibility_gates": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "code",
+                "rule",
+                "description"
+              ],
+              "properties": {
+                "code": {
+                  "type": "string"
+                },
+                "rule": {
+                  "type": "string",
+                  "examples": [
+                    "partial_pct > 30"
+                  ]
+                },
+                "description": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "score": {
+            "type": "object",
+            "required": [
+              "base",
+              "max",
+              "features",
+              "adjustments"
+            ],
+            "properties": {
+              "base": {
+                "type": "integer"
+              },
+              "max": {
+                "type": "integer"
+              },
+              "features": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/MethodologyFeature"
+                }
+              },
+              "adjustments": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/MethodologyAdjustment"
+                }
+              }
+            }
+          },
+          "bands": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "band",
+                "min_score",
+                "max_score",
+                "has_offer"
+              ],
+              "properties": {
+                "band": {
+                  "type": "string"
+                },
+                "min_score": {
+                  "type": "integer"
+                },
+                "max_score": {
+                  "type": "integer"
+                },
+                "has_offer": {
+                  "type": "boolean"
+                }
+              }
+            }
+          },
+          "offer": {
+            "type": "object",
+            "description": "Reglas de la oferta (valores de negocio placeholder)",
+            "properties": {
+              "currency": {
+                "type": "string"
+              },
+              "amortization": {
+                "type": "string"
+              },
+              "by_band": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "object",
+                  "properties": {
+                    "income_multiple": {
+                      "type": "string"
+                    },
+                    "max_term_months": {
+                      "type": "integer"
+                    },
+                    "tna": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              "min_term_months": {
+                "type": "integer"
+              },
+              "max_installment_rule": {
+                "type": "string"
+              },
+              "amount_rule": {
+                "type": "string"
+              },
+              "min_loan_usd": {
+                "type": "string"
+              },
+              "max_loan_usd": {
+                "type": "string"
+              },
+              "valid_days": {
+                "type": "integer"
+              },
+              "fees": {
+                "type": "string"
+              },
+              "disclaimer": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "MethodologyFeature": {
+        "type": "object",
+        "required": [
+          "feature",
+          "label",
+          "description",
+          "unit",
+          "bins"
+        ],
+        "properties": {
+          "feature": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "unit": {
+            "type": "string"
+          },
+          "bins": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "rule",
+                "from",
+                "to",
+                "points"
+              ],
+              "properties": {
+                "rule": {
+                  "type": "string",
+                  "examples": [
+                    ">= 0.3 y < 0.6"
+                  ]
+                },
+                "from": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Desde (incluido); null = sin límite"
+                },
+                "to": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Hasta (excluido); null = sin límite"
+                },
+                "points": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        }
+      },
+      "MethodologyAdjustment": {
+        "type": "object",
+        "required": [
+          "feature",
+          "label",
+          "description",
+          "unit",
+          "condition",
+          "points"
+        ],
+        "properties": {
+          "feature": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "unit": {
+            "type": "string"
+          },
+          "condition": {
+            "type": "string",
+            "examples": [
+              "card_coherence == \"false\""
+            ]
+          },
+          "points": {
+            "type": "integer",
+            "description": "Bono (+) o penalidad (−)"
+          }
+        }
+      },
+      "SourceInfo": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "live"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "examples": [
+              "mercado_pago"
+            ]
+          },
+          "name": {
+            "type": "string",
+            "examples": [
+              "Mercado Pago"
+            ]
+          },
+          "live": {
+            "type": "boolean",
+            "description": "`true` = datos reales (belo con credencial); `false` = dummy o perfil demo"
+          }
+        }
+      },
+      "SourcesResponse": {
+        "type": "object",
+        "required": [
+          "demo_profile",
+          "sources"
+        ],
+        "properties": {
+          "demo_profile": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Perfil demo activo, si hay"
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/SourceInfo"
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "connected"
+                  ],
+                  "properties": {
+                    "connected": {
+                      "type": "boolean",
+                      "description": "Si el usuario tiene la fuente conectada (se combina en el dashboard y el score)"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  }
+}
